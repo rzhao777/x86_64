@@ -18,9 +18,9 @@
 # Add a feed source
 sed -i '1i src-git flrz https://github.com/flrz/openwrt-packages' feeds.conf.default
 #sed -i '2i src-git immortalwrt_packages https://github.com/immortalwrt/packages' feeds.conf.default
-sed -i '2i src-git openclash https://github.com/vernesong/OpenClash' feeds.conf.default
+#sed -i '2i src-git openclash https://github.com/vernesong/OpenClash' feeds.conf.default
 #sed -i '1i src-git kenzo https://github.com/kenzok8/openwrt-packages' feeds.conf.default
-#sed -i '3i src-git small https://github.com/kenzok8/small' feeds.conf.default
+sed -i '3i src-git small https://github.com/kenzok8/small' feeds.conf.default
 #sed -i '3i src-git golang https://github.com/sbwml/packages_lang_golang -b 26.x feeds/packages/lang/golang' feeds.conf.default
 #sed -i '3i src-git openwrt-passwall-packages https://github.com/flrz/openwrt-passwall-packages' feeds.conf.default
 #sed -i '3i src-git passwall_packages https://github.com/flrz/passwall-packages' feeds.conf.default
