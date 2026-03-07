@@ -165,7 +165,7 @@ jobs:
         # 🚀 启用 ccache 提速编译
         # export CCACHE_DIR=~/.ccache
         # ccache -M 3G # 限制为 3GB，留出空间给 dl 库
-        export GOPROXY=https://proxy.golang.org,direct
+        # export GOPROXY=https://proxy.golang.org,direct
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
