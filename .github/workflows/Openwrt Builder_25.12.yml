@@ -140,6 +140,29 @@ jobs:
         echo "CONFIG_AUTOREMOVE=n" >> .config
         echo "CONFIG_SIGNED_PACKAGES=n" >> .config
         make defconfig
+
+    - name: Download OpenClash Core
+      run: |
+        # 创建内核存放目录
+        mkdir -p openwrt/files/etc/openclash/core
+        
+        # 下载官方静态编译的 Clash 内核 (x86_64)
+        # 你可以根据需求替换为 Meta 内核或其他版本
+        CLASH_DEV_URL="https://raw.githubusercontent.com"
+        CLASH_TUN_URL="https://raw.githubusercontent.com"
+        CLASH_META_URL="https://raw.githubusercontent.com"
+
+        echo "Downloading Clash Cores..."
+        curl -sL $CLASH_DEV_URL | tar xz -C openwrt/files/etc/openclash/core/
+        mv openwrt/files/etc/openclash/core/clash openwrt/files/etc/openclash/core/clash_dev
+        
+        curl -sL $CLASH_META_URL | tar xz -C openwrt/files/etc/openclash/core/
+        mv openwrt/files/etc/openclash/core/clash openwrt/files/etc/openclash/core/clash_meta
+
+        # 设置执行权限
+        chmod +x openwrt/files/etc/openclash/core/clash*
+        echo "OpenClash cores downloaded successfully."
+  
             
     - name: Load custom configuration
       run: |
