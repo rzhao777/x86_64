@@ -20,6 +20,8 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
+  CCACHE_SIZE: 4G
+  GOPROXY: https://proxy.golang.org,direct
 
 jobs:
   build:
@@ -32,54 +34,66 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v5
 
-    - name: Initialization environment
+    - name: Maximize Build Space
+      run: |
+        sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
+        sudo docker image prune --all --force
+        df -h  
+
+    - name: Initialize Build Environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android
-        sudo docker image prune --all --force
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
-            g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+        sudo -E apt-get -qq install -y \
+            autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache cmake cpio curl device-tree-compiler flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
             libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
-            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano \
-            ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
-            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
-            upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd      
+            libreadline-dev libssl-dev libtool libz-dev lld llvm lrzsz mkisofs nano \
+            ninja-build p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
+            unzip vim wget xmlto xxd zlib1g-dev zstd
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
-        sudo -E timedatectl set-timezone "Asia/Shanghai"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
+        echo "Build environment ready"
 
-    - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@main
-      with:
-        tool-cache: true
-        android: true
-        dotnet: true
-        haskell: true
-        
-    - name: Clone source code
-      working-directory: /workdir
-      run: |
-        df -hT $PWD
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-
-      # 🚀 新增：实现 DL 库和 CCACHE 缓存
-    - name: Cache Build Dependencies
+    - name: Restore ccache Cache
       uses: actions/cache@v4
       with:
-        path: |
-          openwrt/dl
-          ~/.ccache
-        # Key 包含 OS 和 .config 的哈希，当配置改变时会生成新缓存
-        key: ${{ runner.os }}-openwrt-cache-${{ hashFiles('**/config') }}
-        # 如果 Key 没匹配上，恢复最近一次的缓存，避免从零开始下载
+        path: ~/.ccache
+        # Branch-specific cache key - all commits on same branch share it
+        key: ${{ runner.os }}-ccache-${{ github.ref_name }}
         restore-keys: |
-          ${{ runner.os }}-openwrt-cache-
+          ${{ runner.os }}-ccache-main
+          ${{ runner.os }}-ccache-
+
+    - name: Restore OpenWrt dl Folder
+      uses: actions/cache@v4
+      with:
+        path: /workdir/openwrt/dl
+        # Based on feeds.conf.default - only changes when feeds change
+        key: ${{ runner.os }}-dl-${{ hashFiles('feeds.conf.default') }}
+        restore-keys: |
+          ${{ runner.os }}-dl-
+        
+    - name: Clone OpenWrt Source
+      working-directory: /workdir
+      run: |
+        git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        cd openwrt && echo "Cloned: $(git log -1 --format='%H %s')"
+
+    - name: Configure ccache
+      run: |
+        export CCACHE_DIR=~/.ccache
+        ccache -M $CCACHE_SIZE
+        ccache -z  # Reset stats
+        mkdir -p $CCACHE_DIR
+        echo "CCACHE_DIR=$CCACHE_DIR" >> $GITHUB_ENV
+        echo "CCACHE configured: $CCACHE_SIZE"
           
     - name: Load custom feeds
       run: |
@@ -93,76 +107,33 @@ jobs:
         cd openwrt
         ./scripts/feeds update -a
         
-    - name: Install feeds
+    - name: Update and Install Feeds
       run: |
         cd openwrt
+        echo "Updating feeds..."
+        ./scripts/feeds update -a -f
+        
+        echo "Installing feeds..."
         ./scripts/feeds install -a
-
-        # 移除 openwrt feeds 自带的核心库
-        #rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
-        #git clone https://github.com/Openwrt-Passwall/openwrt-passwall-packages package/passwall-packages
-
-        # 移除 openwrt feeds 过时的luci版本
-        #rm -rf feeds/luci/applications/luci-app-passwall
-        #git clone https://github.com/Openwrt-Passwall/openwrt-passwall package/passwall-luci
-
-        #--------------------------------------begin_patches------------------------------------------
-        echo "Start applying the patch"
-
-
+        
+        echo "Applying 25.12 patches..."
         rm -rf temp_resp
-        git clone -b master --single-branch https://github.com/openwrt/packages.git temp_resp
-        echo "update golang version"
-        rm -rf feeds/packages/lang/golang
-        cp -r temp_resp/lang/golang feeds/packages/lang
-        echo "update rust version"
-        rm -rf feeds/packages/lang/rust
-        cp -r temp_resp/lang/rust feeds/packages/lang
+        git clone --depth=1 -b master --single-branch https://github.com/openwrt/packages.git temp_resp 2>/dev/null || true
+        [ -d "temp_resp/lang/golang" ] && rm -rf feeds/packages/lang/golang && cp -r temp_resp/lang/golang feeds/packages/lang/
+        [ -d "temp_resp/lang/rust" ] && rm -rf feeds/packages/lang/rust && cp -r temp_resp/lang/rust feeds/packages/lang/
         rm -rf temp_resp
-
-        git clone -b main --single-branch https://github.com/openwrt/openwrt.git temp_resp
-        cp -f temp_resp/scripts/patch-kernel.sh scripts/
-        rm -rf temp_resp
-
-        echo "fixed rust host build error"
-        sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
-        grep -q -- '--ci false \\' feeds/packages/lang/rust/Makefile || sed -i '/x\.py \\/a \        --ci false \\' feeds/packages/lang/rust/Makefile
-
+        
+        # Patch rust
+        sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile 2>/dev/null || true
+        
         ./scripts/feeds update -a
         ./scripts/feeds install -a
-
-        echo "Patch application completed"
-        #--------------------------------------end_patches--------------------------------------------
-
+        
+        # Minimal config
         echo "CONFIG_ALL_NONSHARED=n" > .config
         echo "CONFIG_ALL_KMODS=n" >> .config
         echo "CONFIG_ALL=n" >> .config
-        echo "CONFIG_AUTOREMOVE=n" >> .config
-        echo "CONFIG_SIGNED_PACKAGES=n" >> .config
         make defconfig
-
-    - name: Download OpenClash Core
-      run: |
-        # 创建内核存放目录
-        mkdir -p openwrt/files/etc/openclash/core
-        
-        # 下载官方静态编译的 Clash 内核 (x86_64)
-        # 你可以根据需求替换为 Meta 内核或其他版本
-        CLASH_DEV_URL="https://raw.githubusercontent.com"
-        CLASH_TUN_URL="https://raw.githubusercontent.com"
-        CLASH_META_URL="https://raw.githubusercontent.com"
-
-        echo "Downloading Clash Cores..."
-        curl -sL $CLASH_DEV_URL | tar xz -C openwrt/files/etc/openclash/core/
-        mv openwrt/files/etc/openclash/core/clash openwrt/files/etc/openclash/core/clash_dev
-        
-        curl -sL $CLASH_META_URL | tar xz -C openwrt/files/etc/openclash/core/
-        mv openwrt/files/etc/openclash/core/clash openwrt/files/etc/openclash/core/clash_meta
-
-        # 设置执行权限
-        chmod +x openwrt/files/etc/openclash/core/clash*
-        echo "OpenClash cores downloaded successfully."
-  
             
     - name: Load custom configuration
       run: |
@@ -185,10 +156,9 @@ jobs:
       id: compile
       run: |
         cd openwrt
-        # 🚀 启用 ccache 提速编译
         export CCACHE_DIR=~/.ccache
-        ccache -M 5G # 限制 ccache 大小防止超出 Action 10G 总上限
-        export GOPROXY=https://proxy.golang.org,direct
+        export CC="ccache gcc"
+        export CXX="ccache g++"
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
