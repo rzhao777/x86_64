@@ -75,11 +75,12 @@ jobs:
         path: |
           openwrt/dl
           ~/.ccache
-        # Key 包含 OS 和 .config 的哈希，当配置改变时会生成新缓存
-        key: ${{ runner.os }}-openwrt-cache-${{ hashFiles('**/config') }}
-        # 如果 Key 没匹配上，恢复最近一次的缓存，避免从零开始下载
+          ~/.cargo/registry
+          ~/.cargo/git
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-openwrt-v2512-${{ hashFiles('**/config') }}
         restore-keys: |
-          ${{ runner.os }}-openwrt-cache-
+          ${{ runner.os }}-openwrt-v2512-
           
     - name: Load custom feeds
       run: |
