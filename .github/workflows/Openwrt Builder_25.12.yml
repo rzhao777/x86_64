@@ -92,17 +92,6 @@ jobs:
       run: |
         cd openwrt
         ./scripts/feeds update -a
-
-    - name: Cache OpenWrt dl directory
-      uses: actions/cache@v4
-      with:
-        # 填入 dl 目录相对于工作区的路径
-        path: openwrt/dl
-        # 生成缓存 Key：包含系统类型及 config 文件的 hash，确保配置变动时可能产生新缓存
-        key: ${{ runner.os }}-openwrt-dl-${{ hashFiles('openwrt/.config') }}
-        # 备选 Key：如果上述精确匹配失败，则尝试恢复最近一次以该前缀开头的缓存
-        restore-keys: |
-          ${{ runner.os }}-openwrt-dl-
         
     - name: Install feeds
       run: |
