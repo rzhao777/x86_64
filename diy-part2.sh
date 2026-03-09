@@ -9,9 +9,9 @@
 # This is free software, licensed under the MIT License.
 # See /LICENSE for more information.
 #
-sed -i 's/CONFIG_ALL_KMODS=y/# CONFIG_ALL_KMODS is not set/' .config
-sed -i 's/CONFIG_ALL_NONSHARED=y/# CONFIG_ALL_NONSHARED is not set/' .config
-sed -i 's/CONFIG_ALL=y/# CONFIG_ALL is not set/' .config
+#sed -i 's/CONFIG_ALL_KMODS=y/# CONFIG_ALL_KMODS is not set/' .config
+#sed -i 's/CONFIG_ALL_NONSHARED=y/# CONFIG_ALL_NONSHARED is not set/' .config
+#sed -i 's/CONFIG_ALL=y/# CONFIG_ALL is not set/' .config
 
 # Modify default IP
 sed -i 's/192.168.1.1/192.168.6.9/g' package/base-files/files/bin/config_generate
