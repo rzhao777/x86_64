@@ -20,6 +20,7 @@ env:
   TZ: Asia/Shanghai
   CCACHE_SIZE: 4G
   GOPROXY: https://proxy.golang.org,direct
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # 解决 Node 20 弃用警告
 
 jobs:
   build:
@@ -208,6 +209,7 @@ jobs:
         export CCACHE_DIR=~/.ccache
         export CC="ccache gcc"
         export CXX="ccache g++"
+        export PATH="/usr/lib/ccache:$PATH"
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
