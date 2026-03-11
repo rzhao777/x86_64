@@ -1,7 +1,4 @@
-#
-# Openwrt 25.12 with passwall and openclash
-
-name: Openwrt Builder_25.12
+name: Openwrt Builder
 
 on:
   repository_dispatch:
@@ -78,6 +75,7 @@ jobs:
     - name: Clone OpenWrt Source
       working-directory: /workdir
       run: |
+        rm -rf openwrt
         git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
         cd openwrt && echo "Cloned: $(git log -1 --format='%H %s')"
@@ -199,7 +197,7 @@ jobs:
         
         echo "✓ Packages downloaded"
         du -sh dl/
-        
+
     - name: Compile the firmware
       id: compile
       run: |
@@ -213,60 +211,71 @@ jobs:
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-        
-    - name: Check space usage
-      if: (!cancelled())
-      run: df -hT
 
-    - name: Upload bin directory
-      uses: actions/upload-artifact@v4
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
-
-    - name: Organize files
-      id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+    - name: Build Statistics
+      if: always()
       run: |
-        cd openwrt/bin/targets/*/*
+        echo "==========================================="
+        echo "BUILD STATISTICS"
+        echo "==========================================="
+        echo ""
+        echo "--- ccache Statistics ---"
+        ccache -s | head -15
+        echo ""
+        echo "--- Disk Usage ---"
+        df -hT | grep -E "Filesystem|/workdir|Avail"
+        echo ""
+        echo "--- Build Output Size ---"
+        [ -d /workdir/openwrt/bin ] && du -sh /workdir/openwrt/bin || echo "No build output yet"
+
+    - name: Organize Firmware Files
+      id: organize
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      run: |
+        mkdir -p firmware_output
+        cd openwrt/bin/targets/*/*  2>/dev/null || { echo "No firmware found"; exit 1; }
         rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        cp -r * $GITHUB_WORKSPACE/firmware_output/ 2>/dev/null || true
+        ls -lh $GITHUB_WORKSPACE/firmware_output/ | head -20
+        echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_output" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
-        
-    - name: Upload firmware directory
+
+    - name: Upload Firmware
       uses: actions/upload-artifact@v4
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
+        retention-days: 5
+        compression-level: 6
 
-    - name: Generate release tag
+    - name: Generate Release Information
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        touch release.txt
-        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
+        {
+          echo "# OpenWrt 25.12 Build Report"
+          echo ""
+          echo "**Build Date:** $(date '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "**Repository:** $REPO_URL - Branch: $REPO_BRANCH"
+          echo ""
+          echo "## Build Information"
+          [ -f /workdir/openwrt/DEVICE_NAME ] && echo "- Device: $(cat /workdir/openwrt/DEVICE_NAME)" || echo "- Device: Generic"
+          echo "- Firmware artifacts available for download"
+          echo ""
+          echo "## Build Details"
+          [ -f /workdir/openwrt/build.log ] && tail -20 /workdir/openwrt/build.log | sed 's/^/> /' || echo "Build completed"
+        } > release.txt
         echo "status=success" >> $GITHUB_OUTPUT
-        
-    #- name: Upload firmware to release
-      #uses: softprops/action-gh-release@master
-      #if: steps.tag.outputs.status == 'success' && !cancelled()
-      #env:
-        #GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #with:
-        #tag_name: ${{ steps.tag.outputs.release_tag }}
-        #body_path: release.txt
-        #files: ${{ env.FIRMWARE }}/*
 
-    - name: Delete workflow runs
+    - name: Cleanup Old Artifacts
       uses: Mattraks/delete-workflow-runs@main
       with:
         retain_days: 0
         keep_minimum_runs: 2
 
-    - name: Remove old Releases
+    - name: Cleanup Old Releases
       uses: dev-drprasad/delete-older-releases@master
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       with:
