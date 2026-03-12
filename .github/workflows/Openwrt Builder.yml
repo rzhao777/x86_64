@@ -35,12 +35,6 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v5
       
-    - name: Setup Node.js 24
-      uses: actions/setup-node@v5
-      with:
-        node-version: '24' # 自动拉取最新的 Node.js 24.x 版本
-        cache: 'npm'       # 启用依赖缓存，大幅提升后续安装速度
-
     - name: Maximize Build Space
       run: |
         sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
