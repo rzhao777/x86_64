@@ -9,7 +9,6 @@ on:
   schedule:
     - cron: 0 10 * * 6
   
-
 env:
   REPO_URL: https://github.com/openwrt/openwrt
   REPO_BRANCH: openwrt-25.12
