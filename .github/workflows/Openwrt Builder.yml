@@ -187,6 +187,7 @@ jobs:
       id: download
       run: |
         cd openwrt
+        rm -rf packages
         echo "Pre-downloading packages (this may take 5-10 minutes)..."
         
         # Download with retry logic
