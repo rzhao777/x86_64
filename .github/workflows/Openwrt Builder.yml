@@ -33,7 +33,13 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
+      
+    - name: Setup Node.js 24
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24' # 自动拉取最新的 Node.js 24.x 版本
+        cache: 'npm'       # 启用依赖缓存，大幅提升后续安装速度
 
     - name: Maximize Build Space
       run: |
@@ -62,20 +68,22 @@ jobs:
         echo "Build environment ready"
 
     - name: Restore ccache Cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ~/.ccache
         key: ${{ runner.os }}-ccache-${{ github.ref_name }}
         restore-keys: |
-          ${{ runner.os }}-ccache-main
+          ${{ runner.os }}-ccache-${{ github.ref_name }}-
+          ${{ runner.os }}-ccache-main-
           ${{ runner.os }}-ccache-
 
     - name: Restore OpenWrt dl Folder
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
-        path: /workdir/openwrt/dl
-        key: ${{ runner.os }}-dl-${{ hashFiles('feeds.conf.default') }}
+        path: openwrt/dl
+        key: ${{ runner.os }}-dl-${{ hashFiles('**/feeds.conf.default', '**/Makefile') }}
         restore-keys: |
+          ${{ runner.os }}-dl-${{ github.ref_name }}-
           ${{ runner.os }}-dl-
 
     - name: Clone OpenWrt Source
