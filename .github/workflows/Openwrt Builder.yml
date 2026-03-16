@@ -1,5 +1,3 @@
-- name: Make OpenWrt using flippy's script
-  uses: ophub/flippy-openwrt-actions@OpenWrt_armv8_save_2026.03
 
 name: Openwrt Builder
 
