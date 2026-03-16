@@ -1,3 +1,27 @@
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write      
+      contents: write
+
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # Opt into Node.js 24 now
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+
+    - name: Install Node.js 24
+      uses: actions/setup-node@v3
+      with:
+        node-version: "24.x"
+
+    # Continue with the rest of your steps...
+
+
 name: Openwrt Builder
 
 on:
