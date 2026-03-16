@@ -45,12 +45,12 @@ env:
   GOPROXY: https://proxy.golang.org,direct
   NODE_VERSION: "24.x"  # Node.js version, but we will not cache npm
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write      
-      contents: write
+#jobs:
+  #build:
+    #runs-on: ubuntu-latest
+    #permissions:
+      #actions: write      
+      #contents: write
 
     steps:
     - name: Checkout
