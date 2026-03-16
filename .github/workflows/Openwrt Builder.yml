@@ -7,6 +7,19 @@ jobs:
 
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # Opt into Node.js 24 now
+      REPO_URL: https://github.com/openwrt/openwrt
+      REPO_BRANCH: openwrt-25.12
+      FEEDS_CONF: feeds.conf.default
+      CONFIG_FILE: .config
+      DIY_P1_SH: diy-part1.sh
+      DIY_P2_SH: diy-part2.sh
+      UPLOAD_BIN_DIR: false
+      UPLOAD_FIRMWARE: true
+      UPLOAD_RELEASE: true
+      TZ: Asia/Shanghai
+      CCACHE_SIZE: 4G
+      OPROXY: https://proxy.golang.org,direct
+      NODE_VERSION: "24.x"  # Node.js version, but we will not cache npm
 
     steps:
     - name: Checkout
@@ -19,9 +32,6 @@ jobs:
       with:
         node-version: "24.x"
 
-    # Continue with the rest of your steps...
-
-
 name: Openwrt Builder
 
 on:
@@ -30,34 +40,6 @@ on:
   schedule:
     - cron: 0 10 * * 6
   
-env:
-  REPO_URL: https://github.com/openwrt/openwrt
-  REPO_BRANCH: openwrt-25.12
-  FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: .config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
-  TZ: Asia/Shanghai
-  CCACHE_SIZE: 4G
-  GOPROXY: https://proxy.golang.org,direct
-  NODE_VERSION: "24.x"  # Node.js version, but we will not cache npm
-
-#jobs:
-  #build:
-    #runs-on: ubuntu-latest
-    #permissions:
-      #actions: write      
-      #contents: write
-
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v5
-      with:
-        fetch-depth: 0
-
     - name: Maximize Build Space
       run: |
         sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
