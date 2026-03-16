@@ -1,8 +1,16 @@
+name: Openwrt Builder
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+  schedule:
+    - cron: 0 10 * * 6
+
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      actions: write      
+      actions: write
       contents: write
 
     env:
@@ -18,7 +26,7 @@ jobs:
       UPLOAD_RELEASE: true
       TZ: Asia/Shanghai
       CCACHE_SIZE: 4G
-      OPROXY: https://proxy.golang.org,direct
+      GOPROXY: https://proxy.golang.org,direct
       NODE_VERSION: "24.x"  # Node.js version, but we will not cache npm
 
     steps:
@@ -30,16 +38,8 @@ jobs:
     - name: Install Node.js 24
       uses: actions/setup-node@v3
       with:
-        node-version: "24.x"
+        node-version: ${{ env.NODE_VERSION }}
 
-name: Openwrt Builder
-
-on:
-  repository_dispatch:
-  workflow_dispatch:
-  schedule:
-    - cron: 0 10 * * 6
-  
     - name: Maximize Build Space
       run: |
         sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
@@ -66,12 +66,6 @@ on:
         sudo chown $USER:$GROUPS /workdir
         echo "Build environment ready"
 
-    - name: Install Node.js 24
-      uses: actions/setup-node@v3
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-
-    # Remove the npm cache step if not using npm
     - name: Restore ccache Cache
       uses: actions/cache@v5
       with:
@@ -81,5 +75,5 @@ on:
           ${{ runner.os }}-ccache-${{ github.ref_name }}-
           ${{ runner.os }}-ccache-main-
           ${{ runner.os }}-ccache-
-
-    # Continue with the rest of your build steps...
+          
+    # Continue with the rest of your steps here...
