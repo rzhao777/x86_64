@@ -53,6 +53,7 @@ jobs:
         sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
         sudo docker image prune --all --force
         df -hT
+
     # ---------------------------------------------------------
     # 4. Install Build Dependencies
     # ---------------------------------------------------------
@@ -73,6 +74,7 @@ jobs:
         sudo apt-get clean
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
+
     # ---------------------------------------------------------
     # 5. Restore Caches
     # ---------------------------------------------------------
@@ -83,13 +85,15 @@ jobs:
         key: ccache-${{ github.ref_name }}
         restore-keys: |
           ccache-
+
     - name: Restore dl Cache
       uses: actions/cache@v5
       with:
-        path: openwrt/dl
+        path: /workdir/openwrt/dl
         key: dl-${{ hashFiles('**/feeds.conf.default', '**/Makefile') }}
         restore-keys: |
           dl-
+
     # ---------------------------------------------------------
     # 6. Clone OpenWrt
     # ---------------------------------------------------------
@@ -97,7 +101,7 @@ jobs:
       working-directory: /workdir
       run: |
         git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
     # ---------------------------------------------------------
     # 7. Configure ccache
     # ---------------------------------------------------------
@@ -108,64 +112,76 @@ jobs:
         ccache -M $CCACHE_SIZE
         ccache -z
         echo "CCACHE_DIR=$CCACHE_DIR" >> $GITHUB_ENV
+
     # ---------------------------------------------------------
     # 8. Apply Custom Feeds
     # ---------------------------------------------------------
     - name: Load Custom Feeds
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF /workdir/openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH 2>/dev/null || true
-        cd openwrt
+        cd /workdir/openwrt
         [ -f "$GITHUB_WORKSPACE/$DIY_P1_SH" ] && $GITHUB_WORKSPACE/$DIY_P1_SH
+
     - name: Update Feeds
-      run: cd openwrt && ./scripts/feeds update -a
+      run: |
+        cd /workdir/openwrt
+        ./scripts/feeds update -a
 
     - name: Install Feeds
-      run: cd openwrt && ./scripts/feeds install -a
+      run: |
+        cd /workdir/openwrt
+        ./scripts/feeds install -a
 
     # ---------------------------------------------------------
     # 9. Apply Patches (Golang/Rust)
     # ---------------------------------------------------------
     - name: Apply 25.12 Patches
       run: |
-        cd openwrt
+        cd /workdir/openwrt
         git clone --depth=1 -b master https://github.com/openwrt/packages.git temp
         cp -r temp/lang/golang feeds/packages/lang/golang || true
         cp -r temp/lang/rust feeds/packages/lang/rust || true
         rm -rf temp
         sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile || true
+
     # ---------------------------------------------------------
     # 10. Load .config and custom scripts
     # ---------------------------------------------------------
     - name: Load Custom Configuration
       run: |
-        [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        [ -e files ] && mv files /workdir/openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE /workdir/openwrt/.config
         chmod +x $DIY_P2_SH 2>/dev/null || true
-        cd openwrt
+        cd /workdir/openwrt
         [ -f "$GITHUB_WORKSPACE/$DIY_P2_SH" ] && $GITHUB_WORKSPACE/$DIY_P2_SH
+
     - name: Apply Defconfig
-      run: cd openwrt && make defconfig
+      run: |
+        cd /workdir/openwrt
+        make defconfig
 
     # ---------------------------------------------------------
     # 11. Download Sources
     # ---------------------------------------------------------
     - name: Download Packages
       run: |
-        cd openwrt
+        cd /workdir/openwrt
         make download -j$(nproc)
         find dl -size -1024c -delete
+
     # ---------------------------------------------------------
     # 12. Compile Firmware
     # ---------------------------------------------------------
     - name: Compile Firmware
       id: compile
       run: |
-        cd openwrt
+        cd /workdir/openwrt
         export CC="ccache gcc"
         export CXX="ccache g++"
         make -j$(nproc) || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
+
     # ---------------------------------------------------------
     # 13. Collect Firmware
     # ---------------------------------------------------------
@@ -174,9 +190,10 @@ jobs:
       if: steps.compile.outputs.status == 'success'
       run: |
         mkdir -p firmware_output
-        cp -r openwrt/bin/targets/*/*/* firmware_output/ || true
+        cp -r /workdir/openwrt/bin/targets/*/*/* firmware_output/ || true
         echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_output" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
+
     # ---------------------------------------------------------
     # 14. Upload Artifacts
     # ---------------------------------------------------------
@@ -198,6 +215,7 @@ jobs:
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         echo "# OpenWrt Build Report" > release.txt
         echo "Build completed on $(date)" >> release.txt
+
     # ---------------------------------------------------------
     # 16. Cleanup
     # ---------------------------------------------------------
