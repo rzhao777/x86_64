@@ -14,4 +14,4 @@
 #sed -i 's/CONFIG_ALL=y/# CONFIG_ALL is not set/' .config
 
 # Modify default IP
-sed -i 's/192.168.1.1/192.168.6.9/g' package/base-files/files/bin/config_generate
+sed -i 's/192.168.1.1/192.168.25.1/g' package/base-files/files/bin/config_generate
