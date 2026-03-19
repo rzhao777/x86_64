@@ -3,8 +3,8 @@ name: OpenWrt_x86_64 Builder
 on:
   workflow_dispatch:
   repository_dispatch:
-  schedule:
-    - cron: "0 23 * * 6"
+  #schedule:
+    #- cron: "0 23 * * 6"
 
 jobs:
   build:
