@@ -13,8 +13,8 @@ jobs:
       matrix:
         target:
           - { arch: "x86", sub: "64", device: "generic" }
-          - { arch: "ramips", sub: "mt7621", device: "xiaomi_mi-router-4a-gigabit" }
-          - { arch: "ath79", sub: "generic", device: "tplink_archer-c7-v5" }
+          #- { arch: "ramips", sub: "mt7621", device: "xiaomi_mi-router-4a-gigabit" }
+          #- { arch: "ath79", sub: "generic", device: "tplink_archer-c7-v5" }
 
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
