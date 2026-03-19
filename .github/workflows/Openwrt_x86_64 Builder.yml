@@ -1,4 +1,4 @@
-name: OpenWrt Builder
+name: OpenWrt_x86_64 Builder
 
 on:
   workflow_dispatch:
