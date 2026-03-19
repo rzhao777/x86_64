@@ -1,45 +1,65 @@
-name: OpenWrt Matrix Builder
+name: OpenWrt Builder
 
 on:
   workflow_dispatch:
+  repository_dispatch:
   schedule:
     - cron: "0 10 * * 6"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - { arch: "x86", sub: "64", device: "generic" }
-          #- { arch: "ramips", sub: "mt7621", device: "xiaomi_mi-router-4a-gigabit" }
-          #- { arch: "ath79", sub: "generic", device: "tplink_archer-c7-v5" }
+    permissions:
+      actions: write
+      contents: write
 
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       REPO_URL: https://github.com/openwrt/openwrt
       REPO_BRANCH: openwrt-25.12
-      CCACHE_SIZE: 4G
+      FEEDS_CONF: feeds.conf.default
+      CONFIG_FILE: .config
+      DIY_P1_SH: diy-part1.sh
+      DIY_P2_SH: diy-part2.sh
+      UPLOAD_FIRMWARE: true
+      UPLOAD_RELEASE: true
       TZ: Asia/Shanghai
+      CCACHE_SIZE: 4G
+      GOPROXY: https://proxy.golang.org,direct
 
     steps:
+    # ---------------------------------------------------------
+    # 1. Checkout
+    # ---------------------------------------------------------
     - name: Checkout
       uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
 
+    # ---------------------------------------------------------
+    # 2. Install Node.js 24
+    # ---------------------------------------------------------
     - name: Install Node.js 24
       uses: actions/setup-node@v5
       with:
         node-version: 24
         check-latest: true
 
+    # ---------------------------------------------------------
+    # 3. Free Disk Space
+    # ---------------------------------------------------------
     - name: Maximize Build Space
       run: |
         sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
         sudo docker image prune --all --force
         df -hT
 
-    - name: Install Build Dependencies
+    # ---------------------------------------------------------
+    # 4. Install Build Dependencies
+    # ---------------------------------------------------------
+    - name: Install Build Environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y -qq \
@@ -50,17 +70,42 @@ jobs:
           libssl-dev libtool libz-dev lld llvm lrzsz mkisofs ninja-build p7zip-full patch pkgconf \
           python3 python3-pip python3-ply python3-docutils python3-pyelftools qemu-utils re2c \
           rsync scons squashfs-tools subversion swig texinfo unzip vim wget xmlto xxd zlib1g-dev zstd
+        sudo apt-get autoremove -y --purge
+        sudo apt-get clean
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
 
+    # ---------------------------------------------------------
+    # 5. Restore Caches
+    # ---------------------------------------------------------
     - name: Restore ccache
       uses: actions/cache@v5
       with:
         path: ~/.ccache
-        key: ccache-${{ matrix.target.arch }}-${{ matrix.target.sub }}
+        key: ccache-${{ github.ref_name }}
+        restore-keys: |
+          ccache-
 
-    - name: Clone OpenWrt
+    - name: Restore dl Cache
+      uses: actions/cache@v5
+      with:
+        path: openwrt/dl
+        key: dl-${{ hashFiles('**/feeds.conf.default', '**/Makefile') }}
+        restore-keys: |
+          dl-
+
+    # ---------------------------------------------------------
+    # 6. Clone OpenWrt
+    # ---------------------------------------------------------
+    - name: Clone OpenWrt Source
+      working-directory: /workdir
       run: |
         git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
+    # ---------------------------------------------------------
+    # 7. Configure ccache
+    # ---------------------------------------------------------
     - name: Configure ccache
       run: |
         export CCACHE_DIR=~/.ccache
@@ -69,15 +114,15 @@ jobs:
         ccache -z
         echo "CCACHE_DIR=$CCACHE_DIR" >> $GITHUB_ENV
 
-    - name: Configure Target
+    # ---------------------------------------------------------
+    # 8. Apply Custom Feeds
+    # ---------------------------------------------------------
+    - name: Load Custom Feeds
       run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH 2>/dev/null || true
         cd openwrt
-        cat > .config <<EOF
-        CONFIG_TARGET_${{ matrix.target.arch }}=y
-        CONFIG_TARGET_${{ matrix.target.arch }}_${{ matrix.target.sub }}=y
-        CONFIG_TARGET_${{ matrix.target.arch }}_${{ matrix.target.sub }}_DEVICE_${{ matrix.target.device }}=y
-        EOF
-        make defconfig
+        [ -f "$GITHUB_WORKSPACE/$DIY_P1_SH" ] && $GITHUB_WORKSPACE/$DIY_P1_SH
 
     - name: Update Feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -85,24 +130,101 @@ jobs:
     - name: Install Feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Download Sources
-      run: cd openwrt && make download -j$(nproc)
+    # ---------------------------------------------------------
+    # 9. Apply Patches (Golang/Rust)
+    # ---------------------------------------------------------
+    - name: Apply 25.12 Patches
+      run: |
+        cd openwrt
+        git clone --depth=1 -b master https://github.com/openwrt/packages.git temp
+        cp -r temp/lang/golang feeds/packages/lang/golang || true
+        cp -r temp/lang/rust feeds/packages/lang/rust || true
+        rm -rf temp
+        sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile || true
 
+    # ---------------------------------------------------------
+    # 10. Load .config and custom scripts
+    # ---------------------------------------------------------
+    - name: Load Custom Configuration
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH 2>/dev/null || true
+        cd openwrt
+        [ -f "$GITHUB_WORKSPACE/$DIY_P2_SH" ] && $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    - name: Apply Defconfig
+      run: cd openwrt && make defconfig
+
+    # ---------------------------------------------------------
+    # 11. Download Sources
+    # ---------------------------------------------------------
+    - name: Download Packages
+      run: |
+        cd openwrt
+        make download -j$(nproc)
+        find dl -size -1024c -delete
+
+    # ---------------------------------------------------------
+    # 12. Compile Firmware
+    # ---------------------------------------------------------
     - name: Compile Firmware
+      id: compile
       run: |
         cd openwrt
         export CC="ccache gcc"
         export CXX="ccache g++"
         make -j$(nproc) || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Collect Firmware
+    # ---------------------------------------------------------
+    # 13. Collect Firmware
+    # ---------------------------------------------------------
+    - name: Organize Firmware
+      id: organize
+      if: steps.compile.outputs.status == 'success'
       run: |
         mkdir -p firmware_output
-        cp -r openwrt/bin/targets/${{ matrix.target.arch }}/${{ matrix.target.sub }}/* firmware_output/
+        cp -r openwrt/bin/targets/*/*/* firmware_output/ || true
+        echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_output" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
 
+    # ---------------------------------------------------------
+    # 14. Upload Artifacts
+    # ---------------------------------------------------------
     - name: Upload Firmware
       uses: actions/upload-artifact@v4
+      if: steps.organize.outputs.status == 'success'
       with:
-        name: OpenWrt_${{ matrix.target.arch }}_${{ matrix.target.sub }}_${{ matrix.target.device }}
-        path: firmware_output
+        name: OpenWrt_Firmware
+        path: ${{ env.FIRMWARE }}
         retention-days: 5
+
+    # ---------------------------------------------------------
+    # 15. Create Release
+    # ---------------------------------------------------------
+    - name: Generate Release
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true'
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        echo "# OpenWrt Build Report" > release.txt
+        echo "Build completed on $(date)" >> release.txt
+
+    # ---------------------------------------------------------
+    # 16. Cleanup
+    # ---------------------------------------------------------
+    - name: Cleanup Old Artifacts
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2
+
+    - name: Cleanup Old Releases
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.UPLOAD_RELEASE == 'true'
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
