@@ -53,7 +53,6 @@ jobs:
         sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
         sudo docker image prune --all --force
         df -hT
-
     # ---------------------------------------------------------
     # 4. Install Build Dependencies
     # ---------------------------------------------------------
@@ -74,7 +73,6 @@ jobs:
         sudo apt-get clean
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
-
     # ---------------------------------------------------------
     # 5. Restore Caches
     # ---------------------------------------------------------
@@ -85,7 +83,6 @@ jobs:
         key: ccache-${{ github.ref_name }}
         restore-keys: |
           ccache-
-
     - name: Restore dl Cache
       uses: actions/cache@v5
       with:
@@ -93,7 +90,6 @@ jobs:
         key: dl-${{ hashFiles('**/feeds.conf.default', '**/Makefile') }}
         restore-keys: |
           dl-
-
     # ---------------------------------------------------------
     # 6. Clone OpenWrt
     # ---------------------------------------------------------
@@ -102,7 +98,6 @@ jobs:
       run: |
         git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-
     # ---------------------------------------------------------
     # 7. Configure ccache
     # ---------------------------------------------------------
@@ -113,7 +108,6 @@ jobs:
         ccache -M $CCACHE_SIZE
         ccache -z
         echo "CCACHE_DIR=$CCACHE_DIR" >> $GITHUB_ENV
-
     # ---------------------------------------------------------
     # 8. Apply Custom Feeds
     # ---------------------------------------------------------
@@ -123,7 +117,6 @@ jobs:
         chmod +x $DIY_P1_SH 2>/dev/null || true
         cd openwrt
         [ -f "$GITHUB_WORKSPACE/$DIY_P1_SH" ] && $GITHUB_WORKSPACE/$DIY_P1_SH
-
     - name: Update Feeds
       run: cd openwrt && ./scripts/feeds update -a
 
@@ -141,7 +134,6 @@ jobs:
         cp -r temp/lang/rust feeds/packages/lang/rust || true
         rm -rf temp
         sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile || true
-
     # ---------------------------------------------------------
     # 10. Load .config and custom scripts
     # ---------------------------------------------------------
@@ -152,7 +144,6 @@ jobs:
         chmod +x $DIY_P2_SH 2>/dev/null || true
         cd openwrt
         [ -f "$GITHUB_WORKSPACE/$DIY_P2_SH" ] && $GITHUB_WORKSPACE/$DIY_P2_SH
-
     - name: Apply Defconfig
       run: cd openwrt && make defconfig
 
@@ -160,31 +151,10 @@ jobs:
     # 11. Download Sources
     # ---------------------------------------------------------
     - name: Download Packages
-      id: download
       run: |
         cd openwrt
-        rm -rf packages
-        make download V=s -j$(nproc) FIXUP=1
-        echo "Pre-downloading packages (this may take 5-10 minutes)..."
-        
-        # Download with retry logic
-        attempt=1
-        max_attempts=3
-        while [ $attempt -le $max_attempts ]; do
-          echo "Attempt $attempt/$max_attempts..."
-          if make download -j8 V=s 2>&1 | tail -50; then
-            break
-          fi
-          ((attempt++))
-          [ $attempt -le $max_attempts ] && sleep 10
-        done
-        
-        # Remove incomplete downloads
-        find dl -size -1024c -exec rm -f {} \;
-        
-        echo "✓ Packages downloaded"
-        du -sh dl/
-
+        make download -j$(nproc)
+        find dl -size -1024c -delete
     # ---------------------------------------------------------
     # 12. Compile Firmware
     # ---------------------------------------------------------
@@ -196,7 +166,6 @@ jobs:
         export CXX="ccache g++"
         make -j$(nproc) || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
-
     # ---------------------------------------------------------
     # 13. Collect Firmware
     # ---------------------------------------------------------
@@ -208,7 +177,6 @@ jobs:
         cp -r openwrt/bin/targets/*/*/* firmware_output/ || true
         echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_output" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
-
     # ---------------------------------------------------------
     # 14. Upload Artifacts
     # ---------------------------------------------------------
@@ -230,7 +198,6 @@ jobs:
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         echo "# OpenWrt Build Report" > release.txt
         echo "Build completed on $(date)" >> release.txt
-
     # ---------------------------------------------------------
     # 16. Cleanup
     # ---------------------------------------------------------
