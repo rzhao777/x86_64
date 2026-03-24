@@ -1,0 +1,117 @@
+
+name: OpenWrt Builder (GL-MT3000)
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      REPO_URL: https://github.com/openwrt/openwrt
+      REPO_BRANCH: openwrt-25.12
+      FEEDS_CONF: feeds.conf.default
+      CONFIG_FILE: .config
+      DIY_P1_SH: diy-part1.sh
+      DIY_P2_SH: diy-part2.sh
+      UPLOAD_FIRMWARE: true
+      UPLOAD_RELEASE: true
+      TZ: Asia/Shanghai
+      CCACHE_SIZE: 4G
+      GOPROXY: https://proxy.golang.org,direct
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+
+    - name: Install Node.js 24
+      uses: actions/setup-node@v5
+      with:
+        node-version: 24
+
+    - name: Maximize Build Space
+      run: |
+        sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
+        sudo docker image prune --all --force
+
+    - name: Install Build Environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+        gettext git libncurses-dev libssl-dev python3-distutils python3-pyelftools rsync unzip zlib1g-dev \
+        swig libpython3-dev qemu-utils mkisofs wget curl zstd
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+
+    - name: Restore dl Cache
+      uses: actions/cache@v5
+      with:
+        path: /workdir/openwrt/dl
+        key: dl-gl-mt3000-${{ hashFiles('**/feeds.conf.default') }}
+
+    - name: Clone OpenWrt Source
+      working-directory: /workdir
+      run: |
+        git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
+
+    - name: Update & Install Feeds
+      run: |
+        cd /workdir/openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Apply 25.12 Patches
+      run: |
+        cd /workdir/openwrt
+        # 针对 25.12 同步最新的 golang 和 rust 栈
+        git clone --depth=1 -b master https://github.com/openwrt/packages.git temp
+        rm -rf feeds/packages/lang/golang feeds/packages/lang/rust
+        cp -r temp/lang/golang feeds/packages/lang/golang
+        cp -r temp/lang/rust feeds/packages/lang/rust
+        rm -rf temp
+
+    - name: Load Custom Configuration
+      run: |
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE /workdir/openwrt/.config
+        cd /workdir/openwrt
+        make defconfig
+
+    - name: Download Packages
+      run: |
+        cd /workdir/openwrt
+        make download -j$(nproc)
+        find dl -size -1024c -delete
+
+    - name: Compile Firmware
+      id: compile
+      run: |
+        cd /workdir/openwrt
+        echo "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Organize Firmware
+      id: organize
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        cd /workdir/openwrt/bin/targets/mediatek/filogic/
+        mkdir -p $GITHUB_WORKSPACE/firmware_output
+        # 仅收集 sysupgrade 固件，减少体积
+        cp *gl-mt3000*sysupgrade.bin $GITHUB_WORKSPACE/firmware_output/ || cp *.bin $GITHUB_WORKSPACE/firmware_output/
+        echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_output" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload Firmware
+      uses: actions/upload-artifact@v4
+      if: steps.organize.outputs.status == 'success'
+      with:
+        name: OpenWrt_GL-MT3000_25.12
+        path: ${{ env.FIRMWARE }}
