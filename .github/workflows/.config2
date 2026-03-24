@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# 1. 修改默认 IP (可选，例如改为 192.168.1.1)
+sed -i 's/192.168.1.1/192.168.8.1/g' package/base-files/files/bin/config_generate
+
+# 2. 修改主机名 (显示为 GL-MT3000)
+sed -i 's/OpenWrt/GL-MT3000/g' package/base-files/files/bin/config_generate
+
+# 3. 强制开启 Wi-Fi 默认名称和加密 (默认是关闭的)
+# 针对 MT7981 的 radio0 (2.4G) 和 radio1 (5G)
+sed -i '/set wireless.radio${devidx}.disabled=1/d' package/kernel/mac80211/files/lib/wifi/mac80211.sh
+
+# 4. 优化 CPU 调度 (Filogic 820 是双核 A53，建议开启高性能模式)
+# 在系统启动脚本中加入调频设置
+echo "echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor" >> package/base-files/files/etc/rc.local
+
+# 5. 提升终端并发处理能力 (针对大连接数场景)
+echo "net.netfilter.nf_conntrack_max=65535" >> package/base-files/files/etc/sysctl.conf
+echo "net.core.somaxconn=1024" >> package/base-files/files/etc/sysctl.conf
+
+# 6. 移除不必要的官方内置“残血”驱动 (如果使用了第三方插件)
+# 某些环境下官方固件会自带一些冲突的微码，这里保持默认，除非你发现 Wi-Fi 搜不到
+
+# 7. 修正 25.12 下 Argon 主题的显示 (如果是从 master 引入的主题)
+if [ -d "feeds/luci/themes/luci-theme-argon" ]; then
+    sed -i 's/font-weight: 500/font-weight: 600/g' feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/cascade.css
+fi
+
+# 8. 针对 MT3000 的 LED 灯光修正 (可选)
+# 让系统启动完成后，蓝色 LED 常亮
+echo "echo '1' > /sys/class/leds/blue:system/brightness" >> package/base-files/files/etc/rc.local
