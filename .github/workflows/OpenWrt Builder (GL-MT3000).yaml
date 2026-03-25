@@ -66,12 +66,11 @@ jobs:
     - name: Apply 25.12 Patches
       run: |
         cd /workdir/openwrt
-        # 针对 25.12 同步最新的 golang 和 rust 栈
         git clone --depth=1 -b master https://github.com/openwrt/packages.git temp
-        rm -rf feeds/packages/lang/golang feeds/packages/lang/rust
-        cp -r temp/lang/golang feeds/packages/lang/golang
-        cp -r temp/lang/rust feeds/packages/lang/rust
+        cp -r temp/lang/golang feeds/packages/lang/golang || true
+        cp -r temp/lang/rust feeds/packages/lang/rust || true
         rm -rf temp
+        sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile || true
 
     - name: Load Custom Feeds
       run: |
