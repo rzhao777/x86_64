@@ -63,12 +63,6 @@ jobs:
         rm -rf openwrt
         git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
 
-    - name: Update & Install Feeds
-      run: |
-        cd /workdir/openwrt
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
-
     - name: Apply 25.12 Patches
       run: |
         cd /workdir/openwrt
@@ -85,6 +79,12 @@ jobs:
         chmod +x $DIY_P1_SH 2>/dev/null || true
         cd /workdir/openwrt
         [ -f "$GITHUB_WORKSPACE/$DIY_P1_SH" ] && $GITHUB_WORKSPACE/$DIY_P1_SH
+
+    - name: Update & Install Feeds
+      run: |
+        cd /workdir/openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
     - name: Download Packages
       run: |
