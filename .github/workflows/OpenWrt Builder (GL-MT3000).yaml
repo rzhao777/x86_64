@@ -78,11 +78,12 @@ jobs:
         cp -r temp/lang/rust feeds/packages/lang/rust
         rm -rf temp
 
-    - name: Load Custom Configuration
+    - name: Load Custom Feeds
       run: |
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE /workdir/openwrt/.config
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF /workdir/openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH 2>/dev/null || true
         cd /workdir/openwrt
-        make defconfig
+        [ -f "$GITHUB_WORKSPACE/$DIY_P1_SH" ] && $GITHUB_WORKSPACE/$DIY_P1_SH
 
     - name: Download Packages
       run: |
