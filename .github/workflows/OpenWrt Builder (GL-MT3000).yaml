@@ -60,6 +60,7 @@ jobs:
     - name: Clone OpenWrt Source
       working-directory: /workdir
       run: |
+        rm -rf openwrt
         git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
 
     - name: Update & Install Feeds
