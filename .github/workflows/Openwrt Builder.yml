@@ -119,10 +119,7 @@ jobs:
     # ---------------------------------------------------------
     - name: Load Custom Feeds
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF /workdir/openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH 2>/dev/null || true
-        cd /workdir/openwrt
-        [ -f "$GITHUB_WORKSPACE/$DIY_P1_SH" ] && $GITHUB_WORKSPACE/$DIY_P1_SH
+        [ -f "$GITHUB_WORKSPACE/$DIY_P2_SH" ] && $GITHUB_WORKSPACE/$DIY_P2_SH || echo "✓ No DIY_P2_SH script found"
 
     - name: Update Feeds
       run: |
