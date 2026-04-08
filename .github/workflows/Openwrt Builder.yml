@@ -32,31 +32,19 @@ jobs:
           sudo docker image prune --all --force
           df -hT
 
-      - name: Install Dependencies
+      - name: Create Working Directory
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl \
-            device-tree-compiler flex gawk gettext gcc-multilib g++-multilib git gperf help2man \
-            intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
-            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool \
-            libz-dev lld llvm lrzsz mkisofs nano ninja-build p7zip-full patch pkgconf python3 \
-            python3-pip python3-ply python3-pyelftools qemu-utils re2c rsync scons squashfs-tools \
-            subversion swig texinfo unzip vim wget xmlto xxd zlib1g-dev zstd
+          sudo mkdir -p /workdir
+          sudo chown -R $USER:$GROUPS /workdir
+          echo "✅ /workdir created"
 
-      - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1
-        with:
-          key: openwrt-25.12-x86_64-${{ github.ref_name }}
-          max-size: ${{ env.CCACHE_SIZE }}
-          append-timestamp: false
-
-      - name: Cache OpenWrt dl directory
-        uses: actions/cache@v4
-        with:
-          path: /workdir/openwrt/dl
-          key: openwrt-dl-${{ hashFiles('feeds.conf.default', 'config.diff') }}
-          restore-keys: openwrt-dl-
+      - name: Clone OpenWrt Source
+        working-directory: /workdir
+        run: |
+          rm -rf openwrt
+          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+          cd openwrt && echo "Cloned commit: $(git log -1 --oneline)"
 
       - name: Clone OpenWrt Source
         working-directory: /workdir
