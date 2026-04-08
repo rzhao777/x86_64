@@ -1,0 +1,61 @@
+# files/etc/config/firewall
+config defaults
+	option syn_flood '1'
+	option input 'REJECT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+	option drop_invalid '1'          # 丢弃无效连接（安全加固）
+
+config zone
+	option name 'lan'
+	list network 'lan'
+	option input 'ACCEPT'
+	option output 'ACCEPT'
+	option forward 'ACCEPT'
+	option masq '0'
+
+config zone
+	option name 'wan'
+	list network 'wan'
+	list network 'wan6'
+	option input 'REJECT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+	option masq '1'
+	option mtu_fix '1'
+
+config forwarding
+	option src 'lan'
+	option dest 'wan'
+
+# 允许从 LAN 访问路由器管理界面（HTTP/HTTPS + SSH）
+config rule
+	option name 'Allow-LAN-to-Router'
+	option src 'lan'
+	option proto 'tcp'
+	list dest_port '80 443 22'
+	option target 'ACCEPT'
+
+# 允许必要的 ICMP（ping 等）
+config rule
+	option name 'Allow-Ping'
+	option src 'wan'
+	option proto 'icmp'
+	list icmp_type 'echo-request'
+	option target 'ACCEPT'
+
+# 允许 DHCP/DNS 从 LAN 到路由器（dnsmasq）
+config rule
+	option name 'Allow-DHCP-DNS'
+	option src 'lan'
+	option proto 'udp'
+	list dest_port '53 67 68'
+	option target 'ACCEPT'
+
+# 可选：如果需要从 WAN 远程管理（强烈不推荐直接暴露，建议用 WireGuard/OpenVPN）
+# config rule
+# 	option name 'Allow-SSH-WAN'
+# 	option src 'wan'
+# 	option proto 'tcp'
+# 	option dest_port '22'          # 建议改成非22端口
+# 	option target 'ACCEPT'
