@@ -79,7 +79,7 @@ jobs:
           src-git passwall_luci https://github.com/Openwrt-Passwall/openwrt-passwall.git;main
           src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages;main
           src-git openclash https://github.com/vernesong/OpenClash.git;master
-          src-git argon https://github.com/rzhao777/openwrt-themes
+          src-git argon https://github.com/rzhao777/openwrt-themes;master
           EOF
           echo "✓ Third-party feeds added"
 
