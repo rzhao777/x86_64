@@ -1,4 +1,6 @@
-name: OpenWrt 25.12 x86_64 强化安全版
+
+
+name: OpenWrt 25.12 x86_64
 
 on:
   repository_dispatch:
