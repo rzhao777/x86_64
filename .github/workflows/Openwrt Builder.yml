@@ -1,295 +1,169 @@
-
-name: Openwrt Builder
+name: OpenWrt 25.12 x86_64 强化安全版
 
 on:
   repository_dispatch:
   workflow_dispatch:
+    inputs:
+      branch:
+        description: 'OpenWrt branch (default: openwrt-25.12)'
+        required: false
+        default: 'openwrt-25.12'
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # Opt into Node.js 24 now
   REPO_URL: https://github.com/openwrt/openwrt
-  REPO_BRANCH: openwrt-25.12
-  FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: .config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
+  REPO_BRANCH: ${{ github.event.inputs.branch || 'openwrt-25.12' }}
   TZ: Asia/Shanghai
   CCACHE_SIZE: 4G
-  GOPROXY: https://proxy.golang.org,direct
-  NODE_VERSION: "24.x"  # Node.js version, but we will not cache npm
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
-      actions: write      
+      actions: write
       contents: write
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v5
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Install Node.js 24
-      uses: actions/setup-node@v5
-      with:
-        node-version: ${{ env.NODE_VERSION }}
+      - name: Maximize Build Space
+        run: |
+          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
+          sudo docker image prune --all --force
+          df -hT
 
-    - name: Maximize Build Space
-      run: |
-        sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
-        sudo docker image prune --all --force
-        df -hT
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl \
+            device-tree-compiler flex gawk gettext gcc-multilib g++-multilib git gperf help2man \
+            intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool \
+            libz-dev lld llvm lrzsz mkisofs nano ninja-build p7zip-full patch pkgconf python3 \
+            python3-pip python3-ply python3-pyelftools qemu-utils re2c rsync scons squashfs-tools \
+            subversion swig texinfo unzip vim wget xmlto xxd zlib1g-dev zstd
 
-    - name: Initialize Build Environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install -y \
-            autoconf automake autopoint binutils bison build-essential \
-            bzip2 ccache cmake cpio curl device-tree-compiler flex gawk gettext gcc-multilib \
-            g++-multilib git gnutls-dev gperf help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
-            libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
-            libreadline-dev libssl-dev libtool libz-dev lld llvm lrzsz mkisofs nano \
-            ninja-build p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
-            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
-            unzip vim wget xmlto xxd zlib1g-dev zstd
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
-        echo "Build environment ready"
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: openwrt-25.12-x86_64-${{ github.ref_name }}
+          max-size: ${{ env.CCACHE_SIZE }}
+          append-timestamp: false
 
-    - name: Restore ccache Cache
-      uses: actions/cache@v5
-      with:
-        path: ~/.ccache
-        key: ${{ runner.os }}-ccache-${{ github.ref_name }}
-        restore-keys: |
-          ${{ runner.os }}-ccache-main
-          ${{ runner.os }}-ccache-
+      - name: Cache OpenWrt dl directory
+        uses: actions/cache@v4
+        with:
+          path: /workdir/openwrt/dl
+          key: openwrt-dl-${{ hashFiles('feeds.conf.default', 'config.diff') }}
+          restore-keys: openwrt-dl-
 
-    - name: Restore OpenWrt dl Folder
-      uses: actions/cache@v5
-      with:
-        path: /workdir/openwrt/dl
-        key: ${{ runner.os }}-dl-${{ hashFiles('feeds.conf.default') }}
-        restore-keys: |
-          ${{ runner.os }}-dl-
+      - name: Clone OpenWrt Source
+        working-directory: /workdir
+        run: |
+          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+          cd openwrt && echo "Cloned commit: $(git log -1 --oneline)"
 
-    - name: Clone OpenWrt Source
-      working-directory: /workdir
-      run: |
-        rm -rf openwrt
-        git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-        cd openwrt && echo "Cloned: $(git log -1 --format='%H %s')"
+      - name: Add Third-Party Feeds (Passwall + OpenClash + Argon)
+        run: |
+          cd openwrt
+          cat >> feeds.conf.default << 'EOF'
+          src-git passwall https://github.com/xiaorouji/openwrt-passwall.git;main
+          src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main
+          src-git openclash https://github.com/vernesong/OpenClash.git;master
+          src-git argon https://github.com/jerrykuku/luci-theme-argon.git;master
+          src-git argon_config https://github.com/jerrykuku/luci-app-argon-config.git;master
+          EOF
+          echo "✓ Third-party feeds added"
 
-    - name: Configure ccache
-      run: |
-        export CCACHE_DIR=~/.ccache
-        ccache -M $CCACHE_SIZE
-        ccache -z
-        mkdir -p $CCACHE_DIR
-        echo "CCACHE_DIR=$CCACHE_DIR" >> $GITHUB_ENV
-        echo "✓ ccache configured: $CCACHE_SIZE"
+      - name: Update and Install Feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          echo "✓ Feeds updated and installed"
 
-    - name: Load Custom Feeds Configuration
-      run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH 2>/dev/null || true
-        cd openwrt
-        [ -f "$GITHUB_WORKSPACE/$DIY_P1_SH" ] && $GITHUB_WORKSPACE/$DIY_P1_SH || echo "✓ No DIY_P1_SH script found"
+      - name: Apply Custom Configuration (config.diff)
+        run: |
+          cd openwrt
+          # 复制 files 目录（如果有预置配置）
+          [ -d "$GITHUB_WORKSPACE/files" ] && cp -r "$GITHUB_WORKSPACE/files" ./
 
-    - name: Update Feeds
-      run: |
-        cd openwrt
-        echo "Updating feeds..."
-        ./scripts/feeds update -a -f 2>&1 | grep -v "^Cloning\|^Branch\|^Created\|^Using"
-        
-    - name: Install Feeds
-      run: |
-        cd openwrt
-        echo "Installing feeds..."
-        ./scripts/feeds install -a 2>&1 | tail -20
-        echo "✓ Feeds installed"
-
-    - name: Apply 25.12 Patches
-      run: |
-        cd openwrt
-        echo "Applying OpenWrt 25.12 compatibility patches..."
-        
-        # Update golang and rust from master branch
-        rm -rf temp_resp 2>/dev/null || true
-        git clone --depth=1 -b master --single-branch https://github.com/openwrt/packages.git temp_resp 2>/dev/null || true
-        
-        if [ -d "temp_resp/lang/golang" ]; then
-          rm -rf feeds/packages/lang/golang
-          cp -r temp_resp/lang/golang feeds/packages/lang
-          echo "✓ Updated golang"
-        fi
-        
-        if [ -d "temp_resp/lang/rust" ]; then
-          rm -rf feeds/packages/lang/rust
-          cp -r temp_resp/lang/rust feeds/packages/lang
-          echo "✓ Updated rust"
-        fi
-        
-        rm -rf temp_resp
-        
-        # Patch rust build issues
-        if [ -f "feeds/packages/lang/rust/Makefile" ]; then
-          sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
-          grep -q -- '--ci false \\' feeds/packages/lang/rust/Makefile || sed -i '/x\.py \\/a \        --ci false \\' feeds/packages/lang/rust/Makefile
-          echo "✓ Patched rust build flags"
-        fi
-        
-        ./scripts/feeds update -a 2>&1 | tail -5
-        ./scripts/feeds install -a 2>&1 | tail -5
-        echo "✓ Patches applied"
-
-    - name: Load Custom Configuration
-      run: |
-        [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config || echo "⚠ No .config file found"
-        chmod +x $DIY_P2_SH 2>/dev/null || true
-        cd openwrt
-        [ -f "$GITHUB_WORKSPACE/$DIY_P2_SH" ] && $GITHUB_WORKSPACE/$DIY_P2_SH || echo "✓ No DIY_P2_SH script found"
-
-    - name: Apply Defconfig (Non-interactive)
-      run: |
-        cd openwrt
-        if [ -f .config ]; then
-          echo "✓ Using existing .config"
-          # Validate config
-          make defconfig 2>&1 | grep -v "Leaving directory\|Entering directory" || true
-        else
-          echo "⚠ No .config file, creating minimal config..."
-          # Create minimal default config
-          cat > .config << 'EOF'
-        CONFIG_TARGET_x86=y
-        CONFIG_TARGET_x86_64=y
-        CONFIG_TARGET_x86_64_DEVICE_generic=y
-        CONFIG_ALL_NONSHARED=n
-        CONFIG_ALL_KMODS=n
-        CONFIG_ALL=n
-        CONFIG_AUTOREMOVE=n
-        CONFIG_SIGNED_PACKAGES=n
-        EOF
-          make defconfig 2>&1 | grep -v "Leaving directory\|Entering directory" || true
-        fi
-
-    - name: Download Packages
-      id: download
-      run: |
-        cd openwrt
-        rm -rf packages
-        make download V=s -j$(nproc) FIXUP=1
-        echo "Pre-downloading packages (this may take 5-10 minutes)..."
-        
-        # Download with retry logic
-        attempt=1
-        max_attempts=3
-        while [ $attempt -le $max_attempts ]; do
-          echo "Attempt $attempt/$max_attempts..."
-          if make download -j8 V=s 2>&1 | tail -50; then
-            break
+          # 应用 config.diff（推荐方式）
+          if [ -f "$GITHUB_WORKSPACE/config.diff" ]; then
+            echo "Applying config.diff ..."
+            cat "$GITHUB_WORKSPACE/config.diff" >> .config
+          elif [ -f "$GITHUB_WORKSPACE/.config" ]; then
+            cp "$GITHUB_WORKSPACE/.config" .config
+          else
+            echo "⚠ No config.diff or .config found, using minimal base"
           fi
-          ((attempt++))
-          [ $attempt -le $max_attempts ] && sleep 10
-        done
-        
-        # Remove incomplete downloads
-        find dl -size -1024c -exec rm -f {} \;
-        
-        echo "✓ Packages downloaded"
-        du -sh dl/
 
-    - name: Compile the firmware
-      id: compile
-      run: |
-        cd openwrt
-        export CCACHE_DIR=~/.ccache
-        export CC="ccache gcc"
-        export CXX="ccache g++"
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+          # 关键：先 defconfig 合并依赖
+          make defconfig
 
-    - name: Build Statistics
-      if: always()
-      run: |
-        echo "==========================================="
-        echo "BUILD STATISTICS"
-        echo "==========================================="
-        echo ""
-        echo "--- ccache Statistics ---"
-        ccache -s | head -15
-        echo ""
-        echo "--- Disk Usage ---"
-        df -hT | grep -E "Filesystem|/workdir|Avail"
-        echo ""
-        echo "--- Build Output Size ---"
-        [ -d /workdir/openwrt/bin ] && du -sh /workdir/openwrt/bin || echo "No build output yet"
+          # 再次追加内核安全强化选项（防止被覆盖）
+          cat >> .config << 'EOF'
 
-    - name: Organize Firmware Files
-      id: organize
-      if: steps.compile.outputs.status == 'success' && !cancelled()
-      run: |
-        mkdir -p firmware_output
-        cd openwrt/bin/targets/*/*  2>/dev/null || { echo "No firmware found"; exit 1; }
-        rm -rf packages
-        cp -r * $GITHUB_WORKSPACE/firmware_output/ 2>/dev/null || true
-        ls -lh $GITHUB_WORKSPACE/firmware_output/ | head -20
-        echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_output" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
+          # ===== 额外内核安全强化（确保生效） =====
+          CONFIG_RANDOMIZE_BASE=y
+          CONFIG_RANDOMIZE_MEMORY=y
+          CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y
+          CONFIG_INIT_ON_FREE_DEFAULT_ON=y
+          CONFIG_STRICT_KERNEL_RWX=y
+          CONFIG_STRICT_DEVMEM=y
+          CONFIG_SECURITY_DMESG_RESTRICT=y
+          CONFIG_GCC_PLUGIN_LATENT_ENTROPY=y
+          EOF
 
-    - name: Upload Firmware
-      uses: actions/upload-artifact@v5
-      if: steps.organize.outputs.status == 'success' && !cancelled()
-      with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
-        retention-days: 5
-        compression-level: 6
+          make defconfig
 
-    - name: Generate Release Information
-      id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        {
-          echo "# OpenWrt 25.12 Build Report"
-          echo ""
-          echo "**Build Date:** $(date '+%Y-%m-%d %H:%M:%S %Z')"
-          echo "**Repository:** $REPO_URL - Branch: $REPO_BRANCH"
-          echo ""
-          echo "## Build Information"
-          [ -f /workdir/openwrt/DEVICE_NAME ] && echo "- Device: $(cat /workdir/openwrt/DEVICE_NAME)" || echo "- Device: Generic"
-          echo "- Firmware artifacts available for download"
-          echo ""
-          echo "## Build Details"
-          [ -f /workdir/openwrt/build.log ] && tail -20 /workdir/openwrt/build.log | sed 's/^/> /' || echo "Build completed"
-        } > release.txt
-        echo "status=success" >> $GITHUB_OUTPUT
+          # 检查关键内核强化选项是否生效
+          echo "=== Kernel Hardening Check ==="
+          grep -E 'RANDOMIZE_BASE|INIT_ON_ALLOC|INIT_ON_FREE|STRICT_KERNEL_RWX|SECURITY_DMESG_RESTRICT|GCC_PLUGIN_LATENT_ENTROPY|LSM=' .config || true
+          echo "==============================="
 
-    - name: Cleanup Old Artifacts
-      uses: Mattraks/delete-workflow-runs@main
-      with:
-        retain_days: 0
-        keep_minimum_runs: 2
+      - name: Download Packages
+        run: |
+          cd openwrt
+          make download -j$(nproc) || make download -j8 V=s
+          echo "✓ Packages downloaded"
+          du -sh dl/
 
-    - name: Cleanup Old Releases
-      uses: dev-drprasad/delete-older-releases@master
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      with:
-        keep_latest: 3
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compile Firmware
+        run: |
+          cd openwrt
+          export CCACHE_DIR=~/.ccache
+          echo "Starting compile with $(nproc) threads..."
+          make -j$(nproc) || make -j1 V=s
+          echo "Build completed"
+
+      - name: Build Statistics
+        if: always()
+        run: |
+          echo "=== ccache Statistics ==="
+          ccache -s | head -20
+          echo "=== Disk Usage ==="
+          df -hT
+          echo "=== Output Files ==="
+          ls -lh /workdir/openwrt/bin/targets/x86/64/ 2>/dev/null || echo "No output yet"
+
+      - name: Organize & Upload Firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWrt-25.12-x86_64-Secure-${{ github.run_number }}-${{ github.run_id }}
+          path: /workdir/openwrt/bin/targets/x86/64/*
+          retention-days: 7
+          compression-level: 6
+
+      - name: Create Release (if triggered)
+        if: env.UPLOAD_RELEASE == 'true' && github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ format('v{0}', github.run_number) }}
+          name: OpenWrt 25.12 Secure Build ${{ github.run_number }}
+          files: /workdir/openwrt/bin/targets/x86/64/*
+          body_path: release.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
