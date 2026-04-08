@@ -36,7 +36,33 @@ jobs:
         run: |
           sudo mkdir -p /workdir
           sudo chown -R $USER:$GROUPS /workdir
-          echo "✅ /workdir created"
+          echo "✅ /workdir directory created and permissions set"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl \
+            device-tree-compiler flex gawk gettext gcc-multilib g++-multilib git gperf help2man \
+            intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool \
+            libz-dev lld llvm lrzsz mkisofs nano ninja-build p7zip-full patch pkgconf python3 \
+            python3-pip python3-ply python3-pyelftools qemu-utils re2c rsync scons squashfs-tools \
+            subversion swig texinfo unzip vim wget xmlto xxd zlib1g-dev zstd
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: openwrt-25.12-x86_64-${{ github.ref_name }}
+          max-size: ${{ env.CCACHE_SIZE }}
+          append-timestamp: false
+
+      - name: Cache OpenWrt dl directory
+        uses: actions/cache@v4
+        with:
+          path: /workdir/openwrt/dl
+          key: openwrt-dl-${{ hashFiles('feeds.conf.default', 'config.diff') }}
+          restore-keys: openwrt-dl-
 
       - name: Clone OpenWrt Source
         working-directory: /workdir
@@ -46,16 +72,9 @@ jobs:
           ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
           cd openwrt && echo "Cloned commit: $(git log -1 --oneline)"
 
-      - name: Clone OpenWrt Source
-        working-directory: /workdir
-        run: |
-          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
-          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-          cd openwrt && echo "Cloned commit: $(git log -1 --oneline)"
-
       - name: Add Third-Party Feeds (Passwall + OpenClash + Argon)
         run: |
-          cd openwrt
+          cd /workdir/openwrt
           cat >> feeds.conf.default << 'EOF'
           src-git passwall https://github.com/xiaorouji/openwrt-passwall.git;main
           src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main
@@ -67,30 +86,31 @@ jobs:
 
       - name: Update and Install Feeds
         run: |
-          cd openwrt
+          cd /workdir/openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           echo "✓ Feeds updated and installed"
 
       - name: Apply Custom Configuration (config.diff)
         run: |
-          cd openwrt
-          # 复制 files 目录（如果有预置配置）
+          cd /workdir/openwrt
+          
+          # 复制 files/ 目录（预置防火墙、Dropbear 等）
           [ -d "$GITHUB_WORKSPACE/files" ] && cp -r "$GITHUB_WORKSPACE/files" ./
-
-          # 应用 config.diff（推荐方式）
+          
+          # 应用 config.diff
           if [ -f "$GITHUB_WORKSPACE/config.diff" ]; then
             echo "Applying config.diff ..."
             cat "$GITHUB_WORKSPACE/config.diff" >> .config
           elif [ -f "$GITHUB_WORKSPACE/.config" ]; then
             cp "$GITHUB_WORKSPACE/.config" .config
           else
-            echo "⚠ No config.diff or .config found, using minimal base"
+            echo "⚠ No config.diff found, using minimal base"
           fi
-
-          # 关键：先 defconfig 合并依赖
+          
+          # 第一次 defconfig 合并依赖
           make defconfig
-
+          
           # 再次追加内核安全强化选项（防止被覆盖）
           cat >> .config << 'EOF'
 
@@ -104,25 +124,24 @@ jobs:
           CONFIG_SECURITY_DMESG_RESTRICT=y
           CONFIG_GCC_PLUGIN_LATENT_ENTROPY=y
           EOF
-
+          
           make defconfig
-
-          # 检查关键内核强化选项是否生效
+          
+          # 检查关键内核强化选项
           echo "=== Kernel Hardening Check ==="
           grep -E 'RANDOMIZE_BASE|INIT_ON_ALLOC|INIT_ON_FREE|STRICT_KERNEL_RWX|SECURITY_DMESG_RESTRICT|GCC_PLUGIN_LATENT_ENTROPY|LSM=' .config || true
           echo "==============================="
 
       - name: Download Packages
         run: |
-          cd openwrt
+          cd /workdir/openwrt
           make download -j$(nproc) || make download -j8 V=s
           echo "✓ Packages downloaded"
           du -sh dl/
 
       - name: Compile Firmware
         run: |
-          cd openwrt
-          export CCACHE_DIR=~/.ccache
+          cd /workdir/openwrt
           echo "Starting compile with $(nproc) threads..."
           make -j$(nproc) || make -j1 V=s
           echo "Build completed"
@@ -131,7 +150,7 @@ jobs:
         if: always()
         run: |
           echo "=== ccache Statistics ==="
-          ccache -s | head -20
+          ccache -s | head -20 || true
           echo "=== Disk Usage ==="
           df -hT
           echo "=== Output Files ==="
@@ -140,18 +159,21 @@ jobs:
       - name: Organize & Upload Firmware
         uses: actions/upload-artifact@v4
         with:
-          name: OpenWrt-25.12-x86_64-Secure-${{ github.run_number }}-${{ github.run_id }}
+          name: OpenWrt-25.12-x86_64-Secure-${{ github.run_number }}
           path: /workdir/openwrt/bin/targets/x86/64/*
           retention-days: 7
           compression-level: 6
 
       - name: Create Release (if triggered)
-        if: env.UPLOAD_RELEASE == 'true' && github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ format('v{0}', github.run_number) }}
-          name: OpenWrt 25.12 Secure Build ${{ github.run_number }}
+          tag_name: v${{ github.run_number }}
+          name: OpenWrt 25.12 强化安全版 ${{ github.run_number }}
           files: /workdir/openwrt/bin/targets/x86/64/*
-          body_path: release.txt
+          body: |
+            **Build Date:** $(date '+%Y-%m-%d %H:%M:%S %Z')
+            **Branch:** ${{ env.REPO_BRANCH }}
+            **Kernel Hardening:** Enabled (check log above)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
