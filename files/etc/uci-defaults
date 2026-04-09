@@ -1,0 +1,20 @@
+# 文件路径：files/etc/uci-defaults/99-adblock-fast
+#!/bin/sh
+
+# 启用 adblock-fast 服务
+uci set adblock-fast.config.enabled='1'
+
+# 启用常用广告列表（至少一个）
+uci set adblock-fast.config.blocklist_adaway='1'
+uci set adblock-fast.config.blocklist_stevenblack='1'   # 可根据需要增删
+
+# 可选：其他常用设置
+uci set adblock-fast.config.force_dns='1'               # 强制本地 DNS
+uci set adblock-fast.config.dns='dnsmasq'
+
+uci commit adblock-fast
+
+# 启用开机自启动
+/etc/init.d/adblock-fast enable
+
+echo "adblock-fast 已预配置并设置为开机自启动" >> /root/firstboot-notice.txt
