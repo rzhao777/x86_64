@@ -1,180 +1,478 @@
-#Grok generated April 8，2026
-
-name: OpenWrt 25.12 x86_64
+# .github/workflows/build.yml
+name: Build OpenWRT 25.12 x86_64
 
 on:
-  repository_dispatch:
   workflow_dispatch:
     inputs:
-      branch:
-        description: 'OpenWrt branch (default: openwrt-25.12)'
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - lite
+          - minimal
+      release_tag:
+        description: 'Release tag (leave empty for auto)'
         required: false
-        default: 'openwrt-25.12'
+        default: ''
+
+  schedule:
+    # 每周日凌晨 2 点自动构建（UTC）
+    - cron: '0 18 * * 0'
 
 env:
-  REPO_URL: https://github.com/openwrt/openwrt
-  REPO_BRANCH: ${{ github.event.inputs.branch || 'openwrt-25.12' }}
-  TZ: Asia/Shanghai
-  CCACHE_SIZE: 4G
+  OPENWRT_VERSION: "openwrt-25.12"
+  TZ: "Asia/Shanghai"
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    permissions:
-      actions: write
-      contents: write
-
+    name: Build OpenWRT (${{ github.event.inputs.build_type || 'full' }})
+    
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Maximize Build Space
+      - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
-          sudo docker image prune --all --force
-          df -hT
+          echo "=== 清理磁盘空间 ==="
+          sudo apt-get clean
+          
+          # 清理预装软件
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android/sdk
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /opt/hostedtoolcache/go
+          sudo rm -rf /opt/hostedtoolcache/node
+          sudo rm -rf /opt/hostedtoolcache/PyPy
+          sudo rm -rf /opt/hostedtoolcache/Python
+          sudo rm -rf /opt/hostedtoolcache/Ruby
+          
+          # Ubuntu 24.04 清理 snap
+          sudo snap list --all 2>/dev/null | awk '/disabled/{print $1, $3}' | \
+            while read snapname revision; do \
+              sudo snap remove "$snapname" --revision="$revision" 2>/dev/null || true; \
+            done
+          
+          df -h
 
-      - name: Create Working Directory
+      - name: Initialize build environment
         run: |
-          sudo mkdir -p /workdir
-          sudo chown -R $USER:$GROUPS /workdir
-          echo "✅ /workdir directory created and permissions set"
-
-      - name: Install Dependencies
-        run: |
+          echo "=== 安装编译依赖 ==="
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl \
-            device-tree-compiler flex gawk gettext gcc-multilib g++-multilib git gperf help2man \
-            intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
-            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool \
-            libz-dev lld llvm lrzsz mkisofs nano ninja-build p7zip-full patch pkgconf python3 \
-            python3-pip python3-ply python3-pyelftools qemu-utils re2c rsync scons squashfs-tools \
-            subversion swig texinfo unzip vim wget xmlto xxd zlib1g-dev zstd
+          sudo apt-get install -qq -y \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            g++ \
+            gawk \
+            gcc-multilib \
+            g++-multilib \
+            gettext \
+            libncurses-dev \
+            libssl-dev \
+            rsync \
+            unzip \
+            zlib1g-dev \
+            file \
+            wget \
+            curl \
+            git \
+            jq \
+            ccache \
+            python3 \
+            python3-pip \
+            python3-setuptools \
+            python3-wheel \
+            xz-utils \
+            pigz \
+            zstd
+          
+          # Ubuntu 24.04 Python 3.12 需要
+          pip3 install --break-system-packages setuptools distlib || true
+          
+          echo "=== 环境信息 ==="
+          echo "OS: $(lsb_release -d | cut -f2)"
+          echo "Kernel: $(uname -r)"
+          echo "Python: $(python3 --version)"
+          echo "GCC: $(gcc --version | head -1)"
+          df -h
 
-      - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1
-        with:
-          key: openwrt-25.12-x86_64-${{ github.ref_name }}
-          max-size: ${{ env.CCACHE_SIZE }}
-          append-timestamp: false
+      - name: Clone OpenWRT source
+        run: |
+          echo "=== 克隆 OpenWRT 源码 ==="
+          git clone --depth 1 --branch ${{ env.OPENWRT_VERSION }} \
+            https://github.com/openwrt/openwrt.git openwrt
+          
+          cd openwrt
+          echo "OpenWRT 版本: $(git describe --tags --always)"
+          echo "Commit: $(git log -1 --format='%h - %s (%cr)')"
+          
+          # 创建输出目录
+          mkdir -p output/{images,packages,logs,manifests}
 
-      - name: Cache OpenWrt dl directory
+      - name: Cache OpenWRT downloads
+        id: cache-downloads
         uses: actions/cache@v4
         with:
-          path: /workdir/openwrt/dl
-          key: openwrt-dl-${{ hashFiles('feeds.conf.default', 'config.diff') }}
-          restore-keys: openwrt-dl-
+          path: |
+            openwrt/dl
+            openwrt/staging_dir
+            openwrt/build_dir
+            openwrt/.ccache
+          key: openwrt-downloads-${{ env.OPENWRT_VERSION }}-${{ hashFiles('feeds.conf', 'config/*.config') }}
+          restore-keys: |
+            openwrt-downloads-${{ env.OPENWRT_VERSION }}-
 
-      - name: Clone OpenWrt Source
-        working-directory: /workdir
+      - name: Setup feeds configuration
         run: |
-          rm -rf openwrt
-          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
-          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-          cd openwrt && echo "Cloned commit: $(git log -1 --oneline)"
-
-      - name: Add Third-Party Feeds (Passwall + OpenClash + Argon)
-        run: |
-          cd /workdir/openwrt
-          cat >> feeds.conf.default << 'EOF'
-          src-git passwall_luci https://github.com/Openwrt-Passwall/openwrt-passwall.git;main
-          src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages;main
-          src-git openclash https://github.com/vernesong/OpenClash.git;master
-          src-git argon https://github.com/rzhao777/openwrt-themes;master
-          EOF
-          echo "✓ Third-party feeds added"
-
-      - name: Update and Install Feeds
-        run: |
-          cd /workdir/openwrt
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-          echo "✓ Feeds updated and installed"
-
-      - name: Apply Custom Configuration (config.diff)
-        run: |
-          cd /workdir/openwrt
+          cd openwrt
           
-          # 复制 files/ 目录（预置防火墙、Dropbear 等）
-          [ -d "$GITHUB_WORKSPACE/files" ] && cp -r "$GITHUB_WORKSPACE/files" ./
+          echo "=== 配置 feeds ==="
+          # 复制自定义 feeds.conf（包含 Passwall 源）
+          cp ../feeds.conf feeds.conf
           
-          # 应用 config.diff
-          if [ -f "$GITHUB_WORKSPACE/config.diff" ]; then
-            echo "Applying config.diff ..."
-            cat "$GITHUB_WORKSPACE/config.diff" >> .config
-          elif [ -f "$GITHUB_WORKSPACE/.config" ]; then
-            cp "$GITHUB_WORKSPACE/.config" .config
-          else
-            echo "⚠ No config.diff found, using minimal base"
+          # 显示 feeds 配置
+          echo "=== feeds.conf 内容 ==="
+          cat feeds.conf
+          
+          # 验证 Passwall 源存在
+          if ! grep -q "passwall_packages" feeds.conf; then
+            echo "错误：feeds.conf 缺少 Passwall 源配置"
+            exit 1
+          fi
+
+      - name: Update and install feeds
+        run: |
+          cd openwrt
+          
+          echo "=== 更新 feeds ==="
+          ./scripts/feeds update -a 2>&1 | tee output/logs/feeds_update.log
+          
+          echo "=== 安装 feeds ==="
+          ./scripts/feeds install -a 2>&1 | tee output/logs/feeds_install.log
+          
+          # 验证关键包
+          echo "=== 验证 Passwall 相关包 ==="
+          echo "Passwall packages:"
+          ./scripts/feeds list | grep -i passwall || echo "未找到 Passwall"
+          
+          echo -e "\nSing-box/Geoview:"
+          ./scripts/feeds list | grep -E "(sing-box|geoview)" || echo "未找到 Sing-box/Geoview"
+
+      - name: Apply configuration
+        run: |
+          cd openwrt
+          
+          BUILD_TYPE="${{ github.event.inputs.build_type || 'full' }}"
+          
+          echo "=== 应用配置文件: x86-64-${BUILD_TYPE}.config ==="
+          cp ../config/x86-64-${BUILD_TYPE}.config .config
+          
+          # 扩展配置
+          make defconfig
+          
+          # 检查关键包
+          echo "=== 验证关键包配置 ==="
+          check_package() {
+            local pkg=$1
+            if grep -q "^CONFIG_PACKAGE_${pkg}=y" .config; then
+              echo "✓ $pkg: 已启用"
+            else
+              echo "✗ $pkg: 未启用或未找到"
+            fi
+          }
+          
+          check_package "passwall"
+          check_package "geoview"
+          check_package "sing-box"
+          check_package "openclash"
+          check_package "banip"
+          
+          # 配置统计
+          echo -e "\n=== 配置统计 ==="
+          echo "总包数: $(grep -c '^CONFIG_PACKAGE=y' .config || echo 0)"
+          echo "目标平台: $(grep '^CONFIG_TARGET' .config | head -3)"
+
+      - name: Download sources
+        run: |
+          cd openwrt
+          
+          echo "=== 下载源码包 ==="
+          echo "开始时间: $(date)"
+          
+          make download -j$(nproc) 2>&1 | tee output/logs/download.log
+          
+          # 检查下载错误
+          if grep -q "ERROR\|FAILED" output/logs/download.log; then
+            echo "警告：发现下载错误，重试中..."
+            make download -j$(nproc) 2>&1 | tee -a output/logs/download.log
           fi
           
-          # 第一次 defconfig 合并依赖
-          make defconfig
-          
-          # 再次追加内核安全强化选项（防止被覆盖）
-          cat >> .config << 'EOF'
+          echo "结束时间: $(date)"
+          df -h
 
-          # ===== 额外内核安全强化（确保生效） =====
-          CONFIG_RANDOMIZE_BASE=y
-          CONFIG_RANDOMIZE_MEMORY=y
-          CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y
-          CONFIG_INIT_ON_FREE_DEFAULT_ON=y
-          CONFIG_STRICT_KERNEL_RWX=y
-          CONFIG_STRICT_DEVMEM=y
-          CONFIG_SECURITY_DMESG_RESTRICT=y
-          CONFIG_GCC_PLUGIN_LATENT_ENTROPY=y
+      - name: Build firmware
+        run: |
+          cd openwrt
+          
+          echo "=== 开始编译 ==="
+          echo "开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
+          
+          # 编译（保存完整日志）
+          make V=s -j$(nproc) 2>&1 | tee output/logs/build.log
+          
+          BUILD_STATUS=$?
+          echo "结束时间: $(date '+%Y-%m-%d %H:%M:%S')"
+          
+          # 检查编译结果
+          if [ $BUILD_STATUS -ne 0 ]; then
+            echo "=== 编译失败！显示错误 ==="
+            tail -200 output/logs/build.log
+            exit 1
+          fi
+          
+          if [ ! -f "bin/targets/x86/64/openwrt-x86-64-generic-squashfs-combined.img.gz" ]; then
+            echo "错误：未找到生成的镜像文件"
+            tail -200 output/logs/build.log
+            exit 1
+          fi
+          
+          echo "=== 编译成功 ==="
+          ls -lh bin/targets/x86/64/*.img.gz
+
+      - name: Organize artifacts
+        run: |
+          cd openwrt
+          
+          echo "=== 整理构建产物 ==="
+          
+          # 复制镜像文件
+          echo "复制镜像文件..."
+          cp bin/targets/x86/64/openwrt-x86-64-generic-*.img.gz output/images/ 2>/dev/null || true
+          cp bin/targets/x86/64/*.iso.gz output/images/ 2>/dev/null || true
+          cp bin/targets/x86/64/*.vmdk.gz output/images/ 2>/dev/null || true
+          cp bin/targets/x86/64/*.qcow2.gz output/images/ 2>/dev/null || true
+          
+          # 复制包列表
+          echo "复制包列表..."
+          cp bin/targets/x86/64/Packages output/packages/ 2>/dev/null || true
+          cp bin/targets/x86/64/Packages.gz output/packages/ 2>/dev/null || true
+          
+          # 复制清单
+          echo "复制清单文件..."
+          cp bin/targets/x86/64/*.manifest output/manifests/ 2>/dev/null || true
+          
+          # 生成构建信息
+          echo "生成构建信息..."
+          cd output
+          cat > BUILD_INFO << EOF
+          ═══════════════════════════════════════
+             OpenWRT 25.12 x86_64 Build Info
+          ═══════════════════════════════════════
+          
+          构建日期: $(date '+%Y-%m-%d %H:%M:%S %Z')
+          OpenWRT 版本: ${{ env.OPENWRT_VERSION }}
+          构建类型: ${{ github.event.inputs.build_type || 'full' }}
+          系统: Ubuntu 24.04 (GitHub Actions)
+          GitHub Run: ${{ github.run_id }}
+          Commit: ${{ github.sha }}
+          
+          ═══════════════════════════════════════
+                    组件版本信息
+          ═══════════════════════════════════════
           EOF
           
-          make defconfig
+          # 提取版本信息
+          if [ -f "../package/passwall-luci/Makefile" ]; then
+            PASSWALL_VER=$(grep 'PKG_VERSION' ../package/passwall-luci/Makefile | head -1 | cut -d'=' -f2 | tr -d ' ')
+            echo "Passwall: ${PASSWALL_VER}" >> BUILD_INFO
+          fi
           
-          # 检查关键内核强化选项
-          echo "=== Kernel Hardening Check ==="
-          grep -E 'RANDOMIZE_BASE|INIT_ON_ALLOC|INIT_ON_FREE|STRICT_KERNEL_RWX|SECURITY_DMESG_RESTRICT|GCC_PLUGIN_LATENT_ENTROPY|LSM=' .config || true
-          echo "==============================="
+          if [ -f "../package/passwall-packages/sing-box/Makefile" ]; then
+            SINGBOX_VER=$(grep 'PKG_VERSION' ../package/passwall-packages/sing-box/Makefile | head -1 | cut -d'=' -f2 | tr -d ' ')
+            echo "Sing-box: ${SINGBOX_VER}" >> BUILD_INFO
+          fi
+          
+          if [ -f "../package/luci/luci-app-openclash/Makefile" ]; then
+            OPENCLASH_VER=$(grep 'PKG_VERSION' ../package/luci/luci-app-openclash/Makefile 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d ' ')
+            echo "OpenClash: ${OPENCLASH_VER:-Latest}" >> BUILD_INFO
+          fi
+          
+          # 镜像信息
+          echo -e "\n═══════════════════════════════════════\n" >> BUILD_INFO
+          echo "            镜像文件信息" >> BUILD_INFO
+          echo "═══════════════════════════════════════" >> BUILD_INFO
+          ls -lh images/*.gz 2>/dev/null >> BUILD_INFO || true
+          
+          # 包统计
+          echo -e "\n═══════════════════════════════════════" >> BUILD_INFO
+          echo "            包统计信息" >> BUILD_INFO
+          echo "═══════════════════════════════════════" >> BUILD_INFO
+          echo "总包数: $(grep -c '^CONFIG_PACKAGE=y' ../.config 2>/dev/null || echo 'Unknown')" >> BUILD_INFO
+          
+          echo -e "\n构建完成！"
+          cat BUILD_INFO
 
-      - name: Download Packages
+      - name: Generate checksums
         run: |
-          cd /workdir/openwrt
-          make download -j$(nproc) || make download -j8 V=s
-          echo "✓ Packages downloaded"
-          du -sh dl/
+          cd openwrt/output/images
+          
+          echo "=== 生成校验和 ==="
+          sha256sum *.gz > sha256sums.txt 2>/dev/null || true
+          
+          if [ -s sha256sums.txt ]; then
+            echo "SHA256 校验和:"
+            cat sha256sums.txt
+          else
+            echo "警告：未找到镜像文件"
+          fi
 
-      - name: Compile Firmware
-        run: |
-          cd /workdir/openwrt
-          echo "Starting compile with $(nproc) threads..."
-          make -j$(nproc) || make -j1 V=s
-          echo "Build completed"
-
-      - name: Build Statistics
-        if: always()
-        run: |
-          echo "=== ccache Statistics ==="
-          ccache -s | head -20 || true
-          echo "=== Disk Usage ==="
-          df -hT
-          echo "=== Output Files ==="
-          ls -lh /workdir/openwrt/bin/targets/x86/64/ 2>/dev/null || echo "No output yet"
-
-      - name: Organize & Upload Firmware
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: OpenWrt-25.12-x86_64-Secure-${{ github.run_number }}
-          path: /workdir/openwrt/bin/targets/x86/64/*
-          retention-days: 7
-          compression-level: 6
+          name: openwrt-x86-64-${{ github.event.inputs.build_type || 'full' }}-${{ github.run_number }}
+          path: openwrt/output/
+          retention-days: 30
+          compression-level: 9
 
-      - name: Create Release (if triggered)
-        if: github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ github.run_number }}
-          name: OpenWrt 25.12 强化安全版 ${{ github.run_number }}
-          files: /workdir/openwrt/bin/targets/x86/64/*
-          body: |
-            **Build Date:** $(date '+%Y-%m-%d %H:%M:%S %Z')
-            **Branch:** ${{ env.REPO_BRANCH }}
-            **Kernel Hardening:** Enabled (check log above)
+      - name: Create release
+        if: github.event.inputs.build_type == 'full' || github.event.inputs.build_type == ''
+        uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: OpenWRT ${{ env.OPENWRT_VERSION }} x86_64 - ${{ github.event.inputs.build_type || 'Full' }}
+          tag_name: ${{ github.event.inputs.release_tag || format('v25.12-{0}', github.run_number) }}
+          body: |
+            ## OpenWRT 25.12 x86_64 自定义构建
+            
+            ### 🚀 版本亮点
+            - **Passwall**: 最新版 (≥25.3.9)，支持 Sing-box 1.12.0+ 规则集分流
+            - **Sing-box**: 支持 Geoview 从 Geofile 自动生成规则集
+            - **Geoview**: 已集成，Sing-box 分流必需组件
+            - **OpenClash**: 最新版，Clash Meta 核心
+            
+            ### ✨ 功能特性
+            | 特性 | Full | Lite | Minimal |
+            |------|------|------|---------|
+            | OpenClash | ✅ | ✅ | ❌ |
+            | Passwall | ✅ | ❌ | ❌ |
+            | banIP | ✅ | ✅ | ❌ |
+            | SmartDNS | ✅ | ❌ | ❌ |
+            | Argon 主题 | ✅ | ✅ | ✅ |
+            | 安全强化 | ✅ | ✅ | ✅ |
+            
+            ### 📋 系统要求
+            - **内存**: 512MB (Lite), 1GB+ (Full)
+            - **存储**: 4GB+ (推荐 8GB+)
+            - **架构**: x86_64 (支持虚拟机和物理机)
+            
+            ### ⚙️ Passwall 重要说明
+            
+            **Sing-box 1.12.0+ 分流方式变更：**
+            - Sing-box 移除了 Geo，只保留规则集（ruleset）
+            - Passwall 使用 Geoview 从 Geofile 自动生成规则集
+            - **本固件已包含 Geoview**，可直接使用 Sing-box 分流
+            
+            ### 📥 安装步骤
+            
+            #### 方法 1: 使用 balenaEtcher（推荐）
+            1. 下载 `.img.gz` 文件
+            2. 解压得到 `.img` 文件
+            3. 使用 balenaEtcher 写入 U 盘或磁盘
+            4. 启动设备
+            
+            #### 方法 2: 使用 dd 命令
+            ```bash
+            # 解压镜像
+            gunzip openwrt-x86-64-*.img.gz
+            
+            # 写入磁盘（替换 /dev/sdX）
+            sudo dd if=openwrt-x86-64-*.img of=/dev/sdX bs=1M status=progress
+            
+            # 同步写入
+            sync
+            ```
+            
+            ### 🔧 首次配置
+            1. 浏览器访问 `http://192.168.1.1`
+            2. 设置 root 密码
+            3. 配置网络接口（WAN/LAN）
+            4. 配置代理（OpenClash 或 Passwall）
+            5. 启用 banIP
+            
+            ### 📝 默认配置
+            - IP 地址: `192.168.1.1`
+            - 用户名: `root`
+            - 密码: 空（首次登录设置）
+            - SSH 端口: `22`
+            - HTTP 端口: `80`
+            - HTTPS 端口: `443`（如启用）
+            
+            ### 🔍 镜像文件说明
+            - `squashfs-combined.img.gz`: SquashFS 格式（只读系统，推荐）
+            - `ext4-combined.img.gz`: EXT4 格式（可写系统）
+            - `combined.vmdk.gz`: VMware 虚拟机镜像
+            
+            ### 📦 构建信息
+            - 构建时间: ${{ github.event.head_commit.timestamp }}
+            - 构建类型: ${{ github.event.inputs.build_type || 'full' }}
+            - 系统: Ubuntu 24.04
+            - OpenWRT: ${{ env.OPENWRT_VERSION }}
+            - GitHub Run: ${{ github.run_id }}
+            
+            ---
+            
+            如有问题请提交 [Issue](${{ github.repository }}/issues)
+            
+          files: |
+            openwrt/output/images/*.gz
+            openwrt/output/images/sha256sums.txt
+            openwrt/output/BUILD_INFO
+          draft: false
+          prerelease: false
+
+      - name: Clean up
+        if: always()
+        run: |
+          echo "=== 清理工作目录 ==="
+          
+          # 清理构建目录
+          sudo rm -rf openwrt/build_dir openwrt/staging_dir openwrt/logs
+          
+          # 显示磁盘使用
+          df -h
+          
+          echo "=== 构建完成 ==="
+
+  # 可选：通知任务
+  notify:
+    name: Send Notification
+    needs: build
+    if: always()
+    runs-on: ubuntu-24.04
+    
+    steps:
+      - name: Send notification
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "构建状态: ${{ needs.build.result }}"
+          echo "构建类型: ${{ github.event.inputs.build_type || 'full' }}"
+          echo "Run ID: ${{ github.run_id }}"
+          
+          # 这里可以添加通知逻辑（邮件、Telegram 等）
+          # 例如：
+          # - name: Send Telegram notification
+          #   uses: appleboy/telegram-action@master
+          #   with:
+          #     to: ${{ secrets.TELEGRAM_TO }}
+          #     token: ${{ secrets.TELEGRAM_TOKEN }}
+          #     message: |
+          #       OpenWRT 构建完成！
+          #       状态: ${{ needs.build.result }}
+          #       类型: ${{ github.event.inputs.build_type || 'full' }}
