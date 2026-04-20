@@ -57,8 +57,12 @@ jobs:
 
       - name: Clone OpenWRT source
         run: |
+          # 确保路径完整指向 openwrt/openwrt.git
           git clone --depth 1 https://github.com openwrt
           cd openwrt
+          # 打印当前分支信息方便调试
+          echo "Current Branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "Latest Commit: $(git log -1 --format='%h - %s')"
           mkdir -p output/{images,packages,logs}
 
       - name: Setup ccache
