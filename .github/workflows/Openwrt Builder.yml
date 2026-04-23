@@ -105,8 +105,8 @@ jobs:
           rm -rf build_dir/host/rust* staging_dir/host/build_dir/rust* \
                  build_dir/host/stamp/.rust* feeds/packages/lang/rust/build_dir tmp/* 2>/dev/null || true
           
-          echo "=== Preparing host tools (low parallelism) ==="
-          make -j2 tools/install V=s 2>&1 | tee output/logs/host-tools.log
+          echo "=== Preparing host tools (optimized parallelism) ==="
+          make -j4 tools/install V=s 2>&1 | tee output/logs/host-tools.log
           
           echo "=== Force Rust host pre-compile ==="
           make -j1 package/feeds/packages/rust/host/compile V=sc 2>&1 | tee output/logs/rust-host.log || true
@@ -132,13 +132,13 @@ jobs:
         run: |
           cd openwrt
           echo "=== Downloading sources ==="
-          make download -j8 2>&1 | tee output/logs/download.log
+          make download -j12 2>&1 | tee output/logs/download.log
       - name: Build firmware
         run: |
           cd openwrt
           echo "=== Build started at $(date '+%Y-%m-%d %H:%M:%S') ==="
-          # 使用 -j3 平衡速度与稳定性，V=s 适中日志
-          make -j2 V=s > >(tee -a output/logs/build.log) 2>&1
+          # 使用 -j6 优化速度与稳定性，V=s 适中日志
+          make -j6 V=s > >(tee -a output/logs/build.log) 2>&1
           BUILD_STATUS=$?
           echo "=== Build finished at $(date '+%Y-%m-%d %H:%M:%S') ==="
           if [ $BUILD_STATUS -ne 0 ]; then
@@ -190,7 +190,7 @@ jobs:
           retention-days: 14   # full 可适当缩短，节省空间
 
       - name: Create release (Full only)
-        if: github.event.inputs.build_type == 'full' || github.event.inputs.build_type == ''
+        if: (github.event.inputs.build_type == 'full' || github.event.inputs.build_type == '') && github.event_name != 'schedule'
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
