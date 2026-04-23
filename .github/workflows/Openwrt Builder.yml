@@ -98,19 +98,41 @@ jobs:
           cd openwrt
           echo "=== Cleaning old host tools to avoid automake/rust conflicts ==="
           rm -rf staging_dir/host build_dir/host tmp 2>/dev/null || true
-      - name: Fix Rust host build issues (Critical for 25.12)
+          
+      - name: Apply 25.12 Patches
         run: |
           cd openwrt
-          echo "=== Aggressive Rust + host tools cleanup ==="
-          rm -rf build_dir/host/rust* staging_dir/host/build_dir/rust* \
-                 build_dir/host/stamp/.rust* feeds/packages/lang/rust/build_dir tmp/* 2>/dev/null || true
-          
-          echo "=== Preparing host tools (optimized parallelism) ==="
-          make -j4 tools/install V=s 2>&1 | tee output/logs/host-tools.log
-          
-          echo "=== Force Rust host pre-compile ==="
-          make -j1 package/feeds/packages/rust/host/compile V=sc 2>&1 | tee output/logs/rust-host.log || true
-          echo "✅ Rust host preparation completed"
+          echo "Applying OpenWrt 25.12 compatibility patches..."
+        
+          # Update golang and rust from master branch
+          rm -rf temp_resp 2>/dev/null || true
+          git clone --depth=1 -b master --single-branch https://github.com/openwrt/packages.git temp_resp 2>/dev/null || true
+        
+          if [ -d "temp_resp/lang/golang" ]; then
+            rm -rf feeds/packages/lang/golang
+            cp -r temp_resp/lang/golang feeds/packages/lang
+            echo "✓ Updated golang"
+          fi
+        
+          if [ -d "temp_resp/lang/rust" ]; then
+            rm -rf feeds/packages/lang/rust
+            cp -r temp_resp/lang/rust feeds/packages/lang
+            echo "✓ Updated rust"
+          fi
+        
+          rm -rf temp_resp
+        
+          # Patch rust build issues
+          if [ -f "feeds/packages/lang/rust/Makefile" ]; then
+            sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
+            grep -q -- '--ci false \\' feeds/packages/lang/rust/Makefile || sed -i '/x\.py \\/a \        --ci false \\' feeds/packages/lang/rust/Makefile
+            echo "✓ Patched rust build flags"
+          fi
+        
+          ./scripts/feeds update -a 2>&1 | tail -5
+          ./scripts/feeds install -a 2>&1 | tail -5
+          echo "✓ Patches applied"
+
       - name: Apply configuration
         run: |
           cd openwrt
