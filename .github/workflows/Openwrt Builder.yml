@@ -128,6 +128,7 @@ jobs:
           done
           echo "=== Saving config summary ==="
           grep -E '^CONFIG_(TARGET|PACKAGE_)' .config | head -100 > output/logs/config.summary || true
+    
       - name: Download sources
         run: |
           cd openwrt
@@ -136,23 +137,24 @@ jobs:
       - name: Build firmware
         run: |
           cd openwrt
-          echo "=== Build started at $(date '+%Y-%m-%d %H:%M:%S') ==="
-          # 使用 -j6 优化速度与稳定性，V=s 适中日志
-          make -j6 V=s > >(tee -a output/logs/build.log) 2>&1
+          echo "=== Step 1: Build Toolchain & Essential Host Tools ==="
+          # Use -j1 for the most sensitive part to avoid race conditions
+          make -j1 tools/install V=s || make -j1 tools/install V=s
+          
+          echo "=== Step 2: Build Go & Rust Compilers ==="
+          # Force compile the languages that often cause 'Error 2'
+          make -j1 package/feeds/packages/golang/host/compile V=s
+          
+          echo "=== Step 3: Full Build ==="
+          # Now that the environment is locked in, use parallel cores
+          make -j$(nproc) V=s > >(tee -a output/logs/build.log) 2>&1
+          
           BUILD_STATUS=$?
-          echo "=== Build finished at $(date '+%Y-%m-%d %H:%M:%S') ==="
           if [ $BUILD_STATUS -ne 0 ]; then
-            echo "❌ Build FAILED!"
-            echo "=== Last 500 lines of build.log ==="
-            tail -n 500 output/logs/build.log
-            echo "=== Rust host log ==="
-            cat output/logs/rust-host.log 2>/dev/null || echo "No rust-host.log"
-            echo "=== Host tools log last 100 lines ==="
-            tail -n 100 output/logs/host-tools.log 2>/dev/null || true
+            echo "❌ Build FAILED! Retrying with single thread for debug..."
+            make -j1 V=s >> output/logs/build.log 2>&1
             exit 1
           fi
-          echo "✅ Build successful!"
-          ls -lh bin/targets/x86/64/*.img.gz 2>/dev/null || echo "Warning: No image found"
       - name: Organize artifacts
         run: |
           cd openwrt
