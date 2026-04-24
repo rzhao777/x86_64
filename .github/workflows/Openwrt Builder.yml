@@ -156,27 +156,19 @@ jobs:
           cd openwrt
           echo "=== Downloading sources ==="
           make download -j12 2>&1 | tee output/logs/download.log
-      - name: Build firmware
+      - name: Compile the firmware
+        id: compile
         run: |
           cd openwrt
-          echo "=== Step 1: Build Toolchain & Essential Host Tools ==="
-          # Use -j1 for the most sensitive part to avoid race conditions
-          make -j1 tools/install V=s || make -j1 tools/install V=s
-          
-          echo "=== Step 2: Build Go & Rust Compilers ==="
-          # Force compile the languages that often cause 'Error 2'
-          make -j1 package/feeds/packages/golang/host/compile V=s
-          
-          echo "=== Step 3: Full Build ==="
-          # Now that the environment is locked in, use parallel cores
-          make -j$(nproc) V=s > >(tee -a output/logs/build.log) 2>&1
-          
-          BUILD_STATUS=$?
-          if [ $BUILD_STATUS -ne 0 ]; then
-            echo "❌ Build FAILED! Retrying with single thread for debug..."
-            make -j1 V=s >> output/logs/build.log 2>&1
-            exit 1
-          fi
+          export CCACHE_DIR=~/.ccache
+          export CC="ccache gcc"
+          export CXX="ccache g++"
+          echo -e "$(nproc) thread compile"
+          make -j$(nproc) || make -j1 || make -j1 V=s
+          echo "status=success" >> $GITHUB_OUTPUT
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
       - name: Organize artifacts
         run: |
           cd openwrt
