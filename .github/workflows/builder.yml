@@ -14,6 +14,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Maximize Build Space
+        run: |
+          sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /usr/local/.rustup
+          sudo docker image prune --all --force
+          df -hT
+
       - name: Set current date
         run: |
           echo "BUILD_TIME=$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
