@@ -44,3 +44,18 @@ jobs:
           name: OpenWrt_firmware
           path: openwrt/bin/targets/
 
+      - name: Download build artifacts
+        uses: dawidd6/action-download-artifact@v9
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          path: dist
+
+      - name: Prepare release bundle
+        run: |
+          cd dist
+          find . -mindepth 1 -maxdepth 1 -type d | while read -r dir; do
+            name="$(basename "$dir")"
+            tar -czf "${name}.tar.gz" -C "$dir" .
+          done
+
+
