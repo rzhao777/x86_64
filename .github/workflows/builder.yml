@@ -1,5 +1,4 @@
-
-name: Build OpenWrt x86 AI Router
+name: OpenWrt Build
 
 on:
 workflow_dispatch:
@@ -8,13 +7,13 @@ jobs:
 build:
 runs-on: ubuntu-latest
 
+```
 steps:
   - name: Checkout
     uses: actions/checkout@v4
 
   - name: Clone OpenWrt
-    run: |
-      git clone https://github.com/openwrt/openwrt -b openwrt-25.12
+    run: git clone https://github.com/openwrt/openwrt -b openwrt-25.12
 
   - name: Update Feeds
     run: |
@@ -22,13 +21,9 @@ steps:
       ./scripts/feeds update -a
       ./scripts/feeds install -a
 
-  - name: Copy Config
-    run: |
-      cp config/.config openwrt/.config
-      cp -r files/* openwrt/files/
-
-  - name: Build
+  - name: Build Firmware
     run: |
       cd openwrt
       make defconfig
       make -j$(nproc)
+```
