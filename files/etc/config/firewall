@@ -2,29 +2,87 @@ config defaults
     option input 'REJECT'
     option output 'ACCEPT'
     option forward 'REJECT'
+    option synflood_protect '1'
+    option flow_offloading '1'
+    option flow_offloading_hw '1'
 
-uci set firewall.@zone[1].input='REJECT'
-uci commit firewall
+##############################################
+# LAN 区域（内网）
+##############################################
+config zone
+    option name 'lan'
+    list network 'lan'
+    option input 'ACCEPT'
+    option output 'ACCEPT'
+    option forward 'ACCEPT'
 
+##############################################
+# WAN 区域（公网）
+##############################################
+config zone
+    option name 'wan'
+    list network 'wan'
+    option input 'REJECT'
+    option output 'ACCEPT'
+    option forward 'REJECT'
+    option masq '1'
+    option mtu_fix '1'
+
+##############################################
+# LAN -> WAN 转发（允许上网）
+##############################################
+config forwarding
+    option src 'lan'
+    option dest 'wan'
+
+##############################################
+# 基础允许规则（必须）
+##############################################
+
+# DHCP 客户端（获取IP）
 config rule
-    option name 'Allow-DHCP'
+    option name 'Allow-DHCP-Renew'
     option src 'wan'
     option proto 'udp'
     option dest_port '68'
     option target 'ACCEPT'
 
-uci set dropbear.@dropbear[0].Interface='lan'
-uci set dropbear.@dropbear[0].PasswordAuth='off'
-uci commit dropbear
-/etc/init.d/dropbear restart
+# Ping（可选）
+config rule
+    option name 'Allow-Ping'
+    option src 'wan'
+    option proto 'icmp'
+    option icmp_type 'echo-request'
+    option target 'ACCEPT'
 
-uci set uhttpd.main.listen_http='192.168.1.1:80'
-uci set uhttpd.main.listen_https='192.168.1.1:443'
-uci commit uhttpd
+##############################################
+# 🔐 安全加固规则
+##############################################
 
-/etc/init.d/telnet disable
-/etc/init.d/uhttpd disable   # 如果不用 Web
+# ❌ 禁止 WAN 访问 SSH
+config rule
+    option name 'Drop-WAN-SSH'
+    option src 'wan'
+    option proto 'tcp'
+    option dest_port '22'
+    option target 'DROP'
 
+# ❌ 禁止 WAN 访问 Web 管理
+config rule
+    option name 'Drop-WAN-Web'
+    option src 'wan'
+    option proto 'tcp'
+    option dest_port '80 443'
+    option target 'DROP'
+
+# 🚫 防端口扫描
+config rule
+    option name 'Drop-Port-Scan'
+    option proto 'tcp'
+    option tcp_flags 'FIN,SYN,RST,PSH,ACK,URG NONE'
+    option target 'DROP'
+
+# 🚫 限制 SSH 爆破
 config rule
     option name 'Limit-SSH'
     option src 'wan'
@@ -33,5 +91,29 @@ config rule
     option limit '3/minute'
     option target 'ACCEPT'
 
-uci set firewall.@defaults[0].synflood_protect='1'
-uci commit firewall
+##############################################
+# 🧠 sing-box TUN 支持（关键）
+##############################################
+
+config zone
+    option name 'vpn'
+    option input 'ACCEPT'
+    option output 'ACCEPT'
+    option forward 'ACCEPT'
+    option masq '1'
+
+# TUN 接口（自动匹配）
+config forwarding
+    option src 'lan'
+    option dest 'vpn'
+
+config forwarding
+    option src 'vpn'
+    option dest 'wan'
+
+##############################################
+# NAT 优化（提升性能）
+##############################################
+
+config include
+    option path '/etc/firewall.user'
