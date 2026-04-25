@@ -47,6 +47,32 @@ jobs:
           cd openwrt
           make defconfig
 
+      - name: Download Packages
+        id: download
+        run: |
+          cd openwrt
+          rm -rf packages
+          make download V=s -j$(nproc) FIXUP=1
+          echo "Pre-downloading packages (this may take 5-10 minutes)..."
+        
+          # Download with retry logic
+          attempt=1
+          max_attempts=3
+          while [ $attempt -le $max_attempts ]; do
+          echo "Attempt $attempt/$max_attempts..."
+          if make download -j8 V=s 2>&1 | tail -50; then
+            break
+          fi
+          ((attempt++))
+          [ $attempt -le $max_attempts ] && sleep 10
+          done
+        
+          # Remove incomplete downloads
+          find dl -size -1024c -exec rm -f {} \;
+        
+          echo "✓ Packages downloaded"
+          du -sh dl/
+
       - name: Build Firmware
         run: |
           cd openwrt
