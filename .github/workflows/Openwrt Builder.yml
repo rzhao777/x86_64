@@ -1,47 +1,33 @@
-name: Build OpenWrt 25.12
+name: Build OpenWrt 25.12 Smart Router
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y build-essential clang flex bison g++ gawk \
-        gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev \
-        python3-distutils rsync unzip zlib1g-dev file wget
-
     - name: Clone OpenWrt
       run: |
         git clone https://github.com/openwrt/openwrt -b openwrt-25.12
         cd openwrt
+
+    - name: Feeds update
+      run: |
+        cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Load config
+    - name: Copy config
       run: |
-        cp .config openwrt/.config
-
-    - name: Download packages
-      run: |
-        cd openwrt
-        make defconfig
-        make download -j8
+        cp ../config/.config openwrt/.config
 
     - name: Compile
       run: |
         cd openwrt
-        make -j$(nproc) || make -j1 V=s
-
-    - name: Upload firmware
-      uses: actions/upload-artifact@v4
-      with:
-        name: openwrt-firmware
-        path: openwrt/bin/
+        make defconfig
+        make -j$(nproc)
