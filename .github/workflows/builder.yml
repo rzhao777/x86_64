@@ -7,23 +7,21 @@ jobs:
 build:
 runs-on: ubuntu-latest
 
-```
 steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+- name: Checkout
+  uses: actions/checkout@v4
 
-  - name: Clone OpenWrt
-    run: git clone https://github.com/openwrt/openwrt -b openwrt-25.12
+- name: Clone OpenWrt
+  run: git clone https://github.com/openwrt/openwrt -b openwrt-25.12
 
-  - name: Update Feeds
-    run: |
-      cd openwrt
-      ./scripts/feeds update -a
-      ./scripts/feeds install -a
+- name: Update Feeds
+  run: |
+    cd openwrt
+    ./scripts/feeds update -a
+    ./scripts/feeds install -a
 
-  - name: Build Firmware
-    run: |
-      cd openwrt
-      make defconfig
-      make -j$(nproc)
-```
+- name: Build Firmware
+  run: |
+    cd openwrt
+    make defconfig
+    make -j$(nproc)
