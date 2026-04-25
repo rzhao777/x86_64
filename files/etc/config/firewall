@@ -1,1 +1,37 @@
+config defaults
+    option input 'REJECT'
+    option output 'ACCEPT'
+    option forward 'REJECT'
 
+uci set firewall.@zone[1].input='REJECT'
+uci commit firewall
+
+config rule
+    option name 'Allow-DHCP'
+    option src 'wan'
+    option proto 'udp'
+    option dest_port '68'
+    option target 'ACCEPT'
+
+uci set dropbear.@dropbear[0].Interface='lan'
+uci set dropbear.@dropbear[0].PasswordAuth='off'
+uci commit dropbear
+/etc/init.d/dropbear restart
+
+uci set uhttpd.main.listen_http='192.168.1.1:80'
+uci set uhttpd.main.listen_https='192.168.1.1:443'
+uci commit uhttpd
+
+/etc/init.d/telnet disable
+/etc/init.d/uhttpd disable   # 如果不用 Web
+
+config rule
+    option name 'Limit-SSH'
+    option src 'wan'
+    option proto 'tcp'
+    option dest_port '22'
+    option limit '3/minute'
+    option target 'ACCEPT'
+
+uci set firewall.@defaults[0].synflood_protect='1'
+uci commit firewall
