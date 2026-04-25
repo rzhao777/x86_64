@@ -29,7 +29,7 @@ jobs:
           libncurses5-dev
           
       - name: Clone OpenWrt
-        run: git clone https://github.com -b openwrt-25.12
+        run: git clone https://github.com/openwrt/openwrt -b openwrt-25.12
 
       - name: Update Feeds
         run: |
